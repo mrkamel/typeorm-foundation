@@ -73,15 +73,34 @@ Pass nothing and every repository is just the built-ins below, with no extras.
 Each repository built from it is a TypeORM `Repository<Entity>` extended with:
 
 - **`insertEntity(entity)`** — validates, then inserts.
-- **`updateEntity(entity, updates)`** — validates, applies `updates`, runs `beforeUpdate`/`afterUpdate` listeners, and issues a single `UPDATE` only for columns that actually changed. No-ops (skipping validation and listeners) when `updates` is empty. Automatically bumps any `isUpdateDate` column not explicitly included in `updates`.
-- **`upsertEntity(entity, { updates, key? })`** — validates, then runs `INSERT ... ON CONFLICT (key) DO UPDATE ... RETURNING *`, hydrating the returned row (including any column transformers) back onto `entity`. `updates` is either a list of property names to write or an object of values to merge onto the entity first. Needs a `RETURNING`-capable driver (only tested against Postgres here).
-- **`upsertOrFailBy(findCondition, updates)`** — `updateEntity` if a row matching `findCondition` exists, otherwise `insertEntity`.
-- **`removeEntity(entity)`** — removes a clone of `entity` so the original object (and its primary key) is left untouched.
-- **`reload(entity)`** — re-fetches `entity` by primary key, throwing `NotFoundError` if it's gone.
-- **`override(methods)`** — assigns `methods` onto one repository instance (mutating and returning `this`), typed the same way as the factory's `extensions`. Use this for one-off additions to a single repository; use the factory's `extensions` for methods every repository should have.
-- **`validateEntityOrFail(entity, fields)`** — no-op by default; override per repository (via `override(...)`) to add validation beyond what decorators express. Called with `fields: null` on insert/upsert and the list of changed keys on update.
+- **`updateEntity(entity, updates)`** — validates, applies `updates`, runs
+  `beforeUpdate`/`afterUpdate` listeners, and issues a single `UPDATE` only for
+  columns that actually changed. No-ops (skipping validation and listeners) when
+  `updates` is empty. Automatically bumps any `isUpdateDate` column not
+  explicitly included in `updates`.
+- **`upsertEntity(entity, { updates, key? })`** — validates, then runs `INSERT
+  ... ON CONFLICT (key) DO UPDATE ... RETURNING *`, hydrating the returned row
+  (including any column transformers) back onto `entity`. `updates` is either a
+  list of property names to write or an object of values to merge onto the entity
+  first. Needs a `RETURNING`-capable driver (only tested against Postgres here).
+- **`upsertOrFailBy(findCondition, updates)`** — `updateEntity` if a row
+  matching `findCondition` exists, otherwise `insertEntity`.
+- **`removeEntity(entity)`** — removes a clone of `entity` so the original
+  object (and its primary key) is left untouched.
+- **`reload(entity)`** — re-fetches `entity` by primary key, throwing
+  `NotFoundError` if it's gone.
+- **`override(methods)`** — assigns `methods` onto one repository instance
+  (mutating and returning `this`), typed the same way as the factory's
+  `extensions`. Use this for one-off additions to a single repository; use the
+  factory's `extensions` for methods every repository should have.
+- **`validateEntityOrFail(entity, fields)`** — no-op by default; override per
+  repository (via `override(...)`) to add validation beyond what decorators
+  express. Called with `fields: null` on insert/upsert and the list of changed
+  keys on update.
 
-`BaseRepository<Entity>` is the type of what `createBaseRepository(target)` returns — useful for typing a function that accepts one of these repositories, or a class of your own that wraps one.
+`BaseRepository<Entity>` is the type of what `createBaseRepository(target)`
+returns — useful for typing a function that accepts one of these repositories,
+or a class of your own that wraps one.
 
 ## Errors
 
@@ -91,7 +110,12 @@ catches anything this library raises, as opposed to an error from your own
 code or a dependency.
 
 - **`NotFoundError`** — thrown by `reload` when the entity no longer exists.
-- **`ValidationError`** — thrown by `validateOrFail` (and so by `insertEntity`/`updateEntity`/`upsertEntity`); `error.errors` is a `Record<field, string[]>` of every failing message, grouped by property. Its constructor also accepts a plain string (`new ValidationError('something went wrong')`), filed under the `base` key, for a validation failure that isn't tied to one field — e.g. from your own `validateEntityOrFail` override.
+- **`ValidationError`** — thrown by `validateOrFail` (and so by
+  `insertEntity`/`updateEntity`/`upsertEntity`); `error.errors` is a
+  `Record<field, string[]>` of every failing message, grouped by property. Its
+  constructor also accepts a plain string (`new ValidationError('something went
+  wrong')`), filed under the `base` key, for a validation failure that isn't tied
+  to one field — e.g. from your own `validateEntityOrFail` override.
 
 ## Validation
 
@@ -100,11 +124,30 @@ allow passing a context, so `validateOrFail` sets up an `AsyncLocalStorage`
 context that gives decorators access to the transactional entity manager,
 which `insertEntity`/`updateEntity`/`upsertEntity` set up automatically.
 
-- **`ValidateWith(validate, { message? })`** — property decorator; `validate(value, entity, entityManager)` returns an error string (or a `Promise` of one) to fail, `undefined` to pass.
-- **`ValidateRelation(() => RelatedEntity, { with?, validateIf?, message? })`** — fails unless `value` is a valid primary key of `RelatedEntity`; the optional `with(relatedEntity, entity)` callback can reject further (e.g. a status check) after the row is found.
-- **`ValidateUniqueness({ scope?, validateIf?, message? })`** — fails if another row (excluding the entity's own primary key) already has this value, optionally scoped to a set of sibling columns.
-- **`isNew(entity)` / `isChanged(entity, property)` / `isDirty(entity, property)`** — call from inside a validator (or an entity's own `@ValidateIf`) to check the entity against the pre-update snapshot: `isNew` is true when there is no snapshot (an insert), `isChanged` compares the property to the snapshot, `isDirty` is `isNew(entity) || isChanged(entity, property)`.
-- **`validateOrFail({ entity, entityManager, original })`** — runs every decorator on `entity` and throws `ValidationError` (see [Errors](#errors)) if any fail; `original` is the pre-update snapshot (or `null` for an insert) that `isNew`/`isChanged`/`isDirty` read from.
+- **`ValidateWith(validate, { message? })`** — property decorator;
+  `validate(value, entity, entityManager)` returns an error string (or a
+  `Promise` of one) to fail, `undefined` to pass.
+- **`ValidateRelation(() => RelatedEntity, { with?, validateIf?, message? })`**
+  — fails unless `value` is a valid primary key of `RelatedEntity`; the
+  optional `with(relatedEntity, entity)` callback can reject further (e.g. a
+  status check) after the row is found.
+- **`ValidateUniqueness({ scope?, validateIf?, message? })`** — fails if
+  another row (excluding the entity's own primary key) already has this value,
+  optionally scoped to a set of sibling columns.
+- **`isNew(entity)` / `isChanged(entity, property)` /
+  `isDirty(entity, property)`** — call from inside a validator (or an entity's own
+  `@ValidateIf`) to check the entity against the pre-update snapshot: `isNew` is
+  true when there is no snapshot (an insert), `isChanged` compares the property
+  to the snapshot, `isDirty` is `isNew(entity) || isChanged(entity, property)`.
+- **`validateOrFail({ entity, entityManager, original })`** — runs every
+  decorator on `entity` and throws `ValidationError` (see [Errors](#errors)) if
+  any fail; `original` is the pre-update snapshot (or `null` for an insert) that
+  `isNew`/`isChanged`/`isDirty` read from.
+
+Please note: typeorm has no real dirty tracking. Therefore, when using
+`insertEntity` everything is assumed to be changed/dirty and `isNew` returns
+true. When using `updateEntity`, the properties passed are assumed to be
+changed/dirty.
 
 ## Testing
 
