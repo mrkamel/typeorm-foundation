@@ -1,0 +1,4 @@
+allowBuilds:
+  better-sqlite3: true
+minimumReleaseAgeExclude:
+  - custom-typeorm-query-builder@0.14.0
