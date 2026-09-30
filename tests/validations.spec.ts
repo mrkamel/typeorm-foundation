@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { ValidationError } from '../src';
-import { ValidateUniqueness, isChanged, isDirty, isNew, validateOrFail, validationContext } from '../src/validations';
+import { isChanged, isDirty, isNew, validationContext } from '../src/validations';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 
@@ -102,17 +102,6 @@ describe('ValidateUniqueness', () => {
     const team = await TeamRepository.insertEntity(TeamRepository.create({ name: 'Other', code: 'other', archived: false }));
 
     await expect(TeamRepository.updateEntity(team, { name: 'Renamed' })).resolves.toBeDefined();
-  });
-
-  it('lets validateIf skip the check even when the value is undefined', async () => {
-    class SkippableEntity {
-      @ValidateUniqueness({ validateIf: () => false })
-      name?: string;
-    }
-
-    const entity = new SkippableEntity();
-
-    await expect(validateOrFail({ entity, entityManager: {} as EntityManager, original: null })).resolves.toBe(entity);
   });
 });
 

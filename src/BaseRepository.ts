@@ -17,10 +17,7 @@ export type BaseRepository<Entity extends ObjectLiteral> = Repository<Entity> & 
   reload(entity: Entity): Promise<Entity>;
 };
 
-export function createRepositoryFactory<Ext extends object = Record<never, never>>(
-  dataSource: DataSource,
-  extensions?: (target: EntityTarget<ObjectLiteral>) => Ext & ThisType<BaseRepository<ObjectLiteral> & Ext>,
-) {
+export function createRepositoryFactory<Ext extends object = Record<never, never>>(dataSource: DataSource, extensions?: Ext & ThisType<BaseRepository<ObjectLiteral> & Ext>) {
   return function createBaseRepository<Entity extends ObjectLiteral>(target: EntityTarget<Entity>): BaseRepository<Entity> & Ext {
     return dataSource.getRepository(target).extend({
       override<Self, C extends object>(this: Self, custom: C & ThisType<Omit<Self, keyof C> & C>): Omit<Self, keyof C> & C {
@@ -152,7 +149,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         return primaryKeyObject as FindOptionsWhere<Entity>;
       },
-      ...(extensions?.(target) ?? {}) as Ext,
+      ...(extensions ?? {}) as Ext,
     }) as unknown as BaseRepository<Entity> & Ext;
   };
 }

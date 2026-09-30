@@ -51,22 +51,21 @@ A repository built this way validates on every
 
 Takes a `DataSource` and returns `createBaseRepository(entityTarget)`, so one
 factory call wires every repository in your app to the same `DataSource`. The
-optional second argument is a function, called with the entity target each
-time `createBaseRepository` builds a repository, returning a plain object of
-extra methods added onto that repository. Inside those methods, `this` is
-typed as the full repository — the underlying TypeORM `Repository<Entity>`,
-every built-in method below, and every other extension method — so they can
-call `this.createQueryBuilder(...)`, `this.insertEntity(...)`, `this.manager`,
-or each other:
+optional second argument is a plain object of extra methods, added onto every
+repository the factory creates. Inside those methods, `this` is typed as the
+full repository — the underlying TypeORM `Repository<Entity>`, every built-in
+method below, and every other extension method — so they can call
+`this.createQueryBuilder(...)`, `this.insertEntity(...)`, `this.manager`, or
+each other:
 
 ```ts
-export const createBaseRepository = createRepositoryFactory(AppDataSource, (targetEntity) => ({
+export const createBaseRepository = createRepositoryFactory(AppDataSource, {
   async findManyByIds(ids: string[]) {
     return this.createQueryBuilder(this.metadata.tableName)
       .whereInIds(ids)
       .getMany();
   },
-}));
+});
 ```
 
 Pass nothing and every repository is just the built-ins below, with no extras.

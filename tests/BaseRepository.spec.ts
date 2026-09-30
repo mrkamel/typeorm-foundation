@@ -298,15 +298,6 @@ describe('custom extensions passed into the factory', () => {
     const stored = await repository.findOneOrFail({ where: { id: user.id } });
     expect(stored.email).toBe('bare@example.com');
   });
-
-  it('passes the entity target to the extensions function', () => {
-    const extensions = vi.fn().mockReturnValue({});
-    const repositoryFactory = createRepositoryFactory(dataSource, extensions);
-
-    repositoryFactory(UserEntity);
-
-    expect(extensions).toHaveBeenCalledWith(UserEntity);
-  });
 });
 
 describe('override', () => {
