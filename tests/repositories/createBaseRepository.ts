@@ -1,7 +1,6 @@
 import { createRepositoryFactory } from '../../src';
-import { dataSource } from '../dataSource';
 
-export const createBaseRepository = createRepositoryFactory(dataSource, {
+export const createBaseRepository = createRepositoryFactory({
   async countAll() {
     return this.count();
   },

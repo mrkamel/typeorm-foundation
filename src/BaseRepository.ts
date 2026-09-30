@@ -1,6 +1,6 @@
 import { validateOrFail } from './validations';
 import { BaseError, NotFoundError } from './errors';
-import type { DataSource, DeepPartial, EntityTarget, FindOptionsWhere, ObjectLiteral, Repository } from 'typeorm';
+import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository } from 'typeorm';
 
 export type AtLeastOne<T, Keys extends keyof T = keyof T> = {
   [K in Keys]: Required<Pick<T, K>> & Partial<Omit<T, K>>;
@@ -17,9 +17,9 @@ export type BaseRepository<Entity extends ObjectLiteral> = Repository<Entity> & 
   reload(entity: Entity): Promise<Entity>;
 };
 
-export function createRepositoryFactory<Ext extends object = Record<never, never>>(dataSource: DataSource, extensions?: Ext & ThisType<BaseRepository<ObjectLiteral> & Ext>) {
-  return function createBaseRepository<Entity extends ObjectLiteral>(target: EntityTarget<Entity>): BaseRepository<Entity> & Ext {
-    return dataSource.getRepository(target).extend({
+export function createRepositoryFactory<Ext extends object = Record<never, never>>(extensions?: Ext & ThisType<BaseRepository<ObjectLiteral> & Ext>) {
+  return function createBaseRepository<Entity extends ObjectLiteral>(repository: Repository<Entity>): BaseRepository<Entity> & Ext {
+    return repository.extend({
       override<Self, C extends object>(this: Self, custom: C & ThisType<Omit<Self, keyof C> & C>): Omit<Self, keyof C> & C {
         return Object.assign(this as object, custom) as unknown as Omit<Self, keyof C> & C;
       },
@@ -91,7 +91,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         const result = await this.createQueryBuilder()
           .insert()
-          .into(target)
+          .into(this.target)
           .values(entity)
           .orUpdate(
             this._propertyToColumnNames([...updateProperties, ...autoUpdatePropertyNames]),
@@ -120,7 +120,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
         );
       },
       _propertyToColumnNames(propertyNames: (keyof Entity)[]) {
-        const metadata = this.manager.dataSource.getMetadata(target);
+        const metadata = this.metadata;
 
         return propertyNames.map((propertyName) => {
           const column = metadata.findColumnWithPropertyName(propertyName as string);
@@ -130,12 +130,12 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
         });
       },
       _getUpdateDatePropertyNames() {
-        const metadata = this.manager.dataSource.getMetadata(target);
+        const metadata = this.metadata;
 
         return metadata.columns.filter(column => column.isUpdateDate).map(column => column.propertyName);
       },
       _getPrimaryKeyCondition(entity: Entity) {
-        const metadata = this.manager.dataSource.getMetadata(target);
+        const metadata = this.metadata;
         const entityName = metadata.name;
 
         const primaryKeyPropertyNames = metadata.columns.filter(column => column.isPrimary).map(column => column.propertyName);
