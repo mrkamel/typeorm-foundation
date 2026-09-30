@@ -3,7 +3,7 @@ import { NotFoundError, BaseError, ValidationError, createRepositoryFactory } fr
 import { database, dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
-import { createBaseRepository } from './repositories/createBaseRepository';
+import { createFoundationRepository } from './repositories/createFoundationRepository';
 import { UserEntity } from './entities/UserEntity';
 
 describe('BaseError', () => {
@@ -30,7 +30,7 @@ describe('insertEntity', () => {
   });
 
   it('calls validateEntityOrFail with null to run all field validations', async () => {
-    const repository = createBaseRepository(dataSource.getRepository(UserEntity));
+    const repository = createFoundationRepository(dataSource.getRepository(UserEntity));
     const validateEntityOrFailSpy = vi.spyOn(repository, 'validateEntityOrFail');
     const user = repository.create({ email: 'spy@example.com', age: null, teamId: null });
 
@@ -290,8 +290,8 @@ describe('custom extensions passed into the factory', () => {
   });
 
   it('still works when the factory is given no extensions at all', async () => {
-    const bareCreateBaseRepository = createRepositoryFactory();
-    const repository = bareCreateBaseRepository(dataSource.getRepository(UserEntity));
+    const bareCreateFoundationRepository = createRepositoryFactory();
+    const repository = bareCreateFoundationRepository(dataSource.getRepository(UserEntity));
 
     const user = await repository.insertEntity(repository.create({ email: 'bare@example.com', age: null, teamId: null }));
 
@@ -302,7 +302,7 @@ describe('custom extensions passed into the factory', () => {
 
 describe('override', () => {
   it('assigns custom methods onto the repository and returns the same reference', () => {
-    const repository = createBaseRepository(dataSource.getRepository(UserEntity));
+    const repository = createFoundationRepository(dataSource.getRepository(UserEntity));
     const custom = { greet: () => 'hello' };
 
     const result = repository.override(custom);
@@ -312,7 +312,7 @@ describe('override', () => {
   });
 
   it('replaces an existing method with the custom implementation', async () => {
-    const repository = createBaseRepository(dataSource.getRepository(UserEntity));
+    const repository = createFoundationRepository(dataSource.getRepository(UserEntity));
     const customReload = vi.fn().mockResolvedValue('overridden');
 
     const result = repository.override({ reload: customReload });
@@ -322,7 +322,7 @@ describe('override', () => {
   });
 
   it('lets a custom method call other repository methods via this', async () => {
-    const repository = createBaseRepository(dataSource.getRepository(UserEntity));
+    const repository = createFoundationRepository(dataSource.getRepository(UserEntity));
     const user = await repository.insertEntity(repository.create({ email: 'override@example.com', age: null, teamId: null }));
 
     const result = repository.override({

@@ -3,7 +3,7 @@
 This is an opinionated library to provide the missing pieces
 in daily life with typeorm.
 
-It provides a base repository and entity validation building blocks for TypeORM: a
+It provides a foundation repository and entity validation building blocks for TypeORM: a
 `class-validator`-backed validation pipeline wired into insert/update/upsert,
 plus a repository extension with safe upserts and a way to add your own
 methods to every repository the factory creates.
@@ -36,8 +36,8 @@ class UserEntity {
 }
 
 const dataSource = new DataSource({ /* ... */ });
-const createBaseRepository = createRepositoryFactory(dataSource);
-const UserRepository = createBaseRepository(UserEntity);
+const createFoundationRepository = createRepositoryFactory();
+const UserRepository = createFoundationRepository(dataSource.getRepository(UserEntity));
 
 const user = await UserRepository.insertEntity(UserRepository.create({ email: 'ada@example.com' }));
 await UserRepository.updateEntity(user, { email: 'ada@newdomain.com' });
@@ -49,26 +49,45 @@ A repository built this way validates on every
 
 ## createRepositoryFactory
 
-Takes a `DataSource` and returns `createBaseRepository(entityTarget)`, so one
-factory call wires every repository in your app to the same `DataSource`. The
-optional second argument is a plain object of extra methods, added onto every
+Returns `createFoundationRepository(repository)`, which takes a plain TypeORM
+`Repository` and extends it with everything below. No `DataSource` is needed —
+the entity target, metadata and data source all come from the repository you
+hand in.
+
+The optional argument is a plain object of extra methods, added onto every
 repository the factory creates. Inside those methods, `this` is typed as the
-full repository — the underlying TypeORM `Repository<Entity>`, every built-in
-method below, and every other extension method — so they can call
+full repository — the underlying TypeORM `Repository`, every built-in method
+below, and every other extension method — so they can call
 `this.createQueryBuilder(...)`, `this.insertEntity(...)`, `this.manager`, or
 each other:
 
 ```ts
-export const createBaseRepository = createRepositoryFactory(AppDataSource, {
+export const createFoundationRepository = createRepositoryFactory({
   async findManyByIds(ids: string[]) {
     return this.createQueryBuilder(this.metadata.tableName)
       .whereInIds(ids)
       .getMany();
   },
 });
+
+export const UserRepository = createFoundationRepository(AppDataSource.getRepository(UserEntity));
 ```
 
 Pass nothing and every repository is just the built-ins below, with no extras.
+
+Since one `extensions` object is shared across every repository, `this` inside
+those methods is typed against a generic entity rather than the specific one a
+given repository is for. Anything that needs the concrete entity type belongs
+on the individual repository instead — either via TypeORM's own `.extend(...)`
+on the result, or via `override(...)`, where `this` is entity-specific:
+
+```ts
+export const UserRepository = createFoundationRepository(AppDataSource.getRepository(UserEntity)).extend({
+  async findByEmail(email: string) {
+    return this.findOne({ where: { email } });   // `this` is entity-specific here
+  },
+});
+```
 
 Each repository built from it is a TypeORM `Repository<Entity>` extended with:
 
@@ -90,15 +109,16 @@ Each repository built from it is a TypeORM `Repository<Entity>` extended with:
 - **`reload(entity)`** — re-fetches `entity` by primary key, throwing
   `NotFoundError` if it's gone.
 - **`override(methods)`** — assigns `methods` onto one repository instance
-  (mutating and returning `this`), typed the same way as the factory's
-  `extensions`. Use this for one-off additions to a single repository; use the
-  factory's `extensions` for methods every repository should have.
+  (mutating and returning `this`). Unlike the factory's `extensions`, `this`
+  here is typed against the concrete entity, because it runs on an
+  already-built repository. Use it for anything needing real entity types, and
+  the factory's `extensions` for methods every repository should have.
 - **`validateEntityOrFail(entity, fields)`** — no-op by default; override per
   repository (via `override(...)`) to add validation beyond what decorators
   express. Called with `fields: null` on insert/upsert and the list of changed
   keys on update.
 
-`BaseRepository<Entity>` is the type of what `createBaseRepository(target)`
+`FoundationRepository<Entity>` is the type of what `createFoundationRepository(repository)`
 returns — useful for typing a function that accepts one of these repositories,
 or a class of your own that wraps one.
 

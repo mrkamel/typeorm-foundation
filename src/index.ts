@@ -1,5 +1,5 @@
-export { createRepositoryFactory } from './BaseRepository';
-export type { AtLeastOne, BaseRepository } from './BaseRepository';
+export { createRepositoryFactory } from './repository';
+export type { AtLeastOne, FoundationRepository } from './repository';
 export { BaseError, NotFoundError, ValidationError } from './errors';
 
 export {

@@ -6,7 +6,7 @@ export type AtLeastOne<T, Keys extends keyof T = keyof T> = {
   [K in Keys]: Required<Pick<T, K>> & Partial<Omit<T, K>>;
 }[Keys];
 
-export type BaseRepository<Entity extends ObjectLiteral> = Repository<Entity> & {
+export type FoundationRepository<Entity extends ObjectLiteral> = Repository<Entity> & {
   override<Self, C extends object>(this: Self, custom: C & ThisType<Omit<Self, keyof C> & C>): Omit<Self, keyof C> & C;
   removeEntity(entity: Entity): Promise<Entity>;
   upsertOrFailBy(findCondition: FindOptionsWhere<Entity>, updates: Partial<Entity>): Promise<Entity>;
@@ -17,8 +17,8 @@ export type BaseRepository<Entity extends ObjectLiteral> = Repository<Entity> & 
   reload(entity: Entity): Promise<Entity>;
 };
 
-export function createRepositoryFactory<Ext extends object = Record<never, never>>(extensions?: Ext & ThisType<BaseRepository<ObjectLiteral> & Ext>) {
-  return function createBaseRepository<Entity extends ObjectLiteral>(repository: Repository<Entity>): BaseRepository<Entity> & Ext {
+export function createRepositoryFactory<Ext extends object = Record<never, never>>(extensions?: Ext & ThisType<FoundationRepository<ObjectLiteral> & Ext>) {
+  return function createFoundationRepository<Entity extends ObjectLiteral>(repository: Repository<Entity>): FoundationRepository<Entity> & Ext {
     return repository.extend({
       override<Self, C extends object>(this: Self, custom: C & ThisType<Omit<Self, keyof C> & C>): Omit<Self, keyof C> & C {
         return Object.assign(this as object, custom) as unknown as Omit<Self, keyof C> & C;
@@ -150,6 +150,6 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
         return primaryKeyObject as FindOptionsWhere<Entity>;
       },
       ...(extensions ?? {}) as Ext,
-    }) as unknown as BaseRepository<Entity> & Ext;
+    }) as unknown as FoundationRepository<Entity> & Ext;
   };
 }

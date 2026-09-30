@@ -1,5 +1,5 @@
 import { UserEntity } from '../entities/UserEntity';
 import { dataSource } from '../dataSource';
-import { createBaseRepository } from './createBaseRepository';
+import { createFoundationRepository } from './createFoundationRepository';
 
-export const UserRepository = createBaseRepository(dataSource.getRepository(UserEntity));
+export const UserRepository = createFoundationRepository(dataSource.getRepository(UserEntity));
