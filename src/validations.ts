@@ -150,11 +150,10 @@ export function ValidateUniqueness<Entity extends ObjectLiteral, Key extends Ext
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
-          if (value === undefined) return false;
-
           const entity = validationArguments?.object as Entity;
 
           if (options?.validateIf && !options.validateIf(entity)) return true;
+          if (value === undefined) return false;
 
           const context = getValidationContextOrFail();
           const repository = context.entityManager.getRepository(entity.constructor);
