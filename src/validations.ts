@@ -6,11 +6,16 @@ import type { EntityManager, ObjectLiteral } from 'typeorm';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BaseError, ValidationError } from './errors';
 
-export const validationContext = new AsyncLocalStorage<{
+type ValidationContext = AsyncLocalStorage<{
   entityManager: EntityManager,
   original: ObjectLiteral | null,
   customErrors: Record<string, string>,
-}>();
+}>;
+
+const validationContextKey = Symbol.for('typeorm-foundation:validationContext');
+const globalScope = globalThis as typeof globalThis & { [validationContextKey]?: ValidationContext };
+
+export const validationContext: ValidationContext = globalScope[validationContextKey] ??= new AsyncLocalStorage();
 
 export function getValidationContextOrFail() {
   const store = validationContext.getStore();

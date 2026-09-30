@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { ValidationError } from '../src';
-import { isChanged, isDirty, isNew, validationContext } from '../src/validations';
+import { isChanged, isDirty, isNew, validateOrFail, validationContext, ValidateWith } from '../src/validations';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 
@@ -102,6 +102,23 @@ describe('ValidateUniqueness', () => {
     const team = await TeamRepository.insertEntity(TeamRepository.create({ name: 'Other', code: 'other', archived: false }));
 
     await expect(TeamRepository.updateEntity(team, { name: 'Renamed' })).resolves.toBeDefined();
+  });
+});
+
+describe('validationContext', () => {
+  it('is reachable from a decorator running inside a validateOrFail context', async () => {
+    const seen: boolean[] = [];
+
+    class ContextProbeEntity {
+      @ValidateWith<ContextProbeEntity, 'name'>(() => {
+        seen.push(Boolean(validationContext.getStore()));
+      })
+      name = 'probe';
+    }
+
+    await validateOrFail({ entity: new ContextProbeEntity(), entityManager: {} as EntityManager, original: null });
+
+    expect(seen).toEqual([true]);
   });
 });
 
