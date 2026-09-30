@@ -47,7 +47,7 @@ A repository built this way validates on every
 `insertEntity`/`updateEntity`/`upsertEntity` call and throws a
 `ValidationError` (one message per invalid field) if any decorator fails.
 
-## `createRepositoryFactory(dataSource, extensions?)`
+## createRepositoryFactory
 
 Takes a `DataSource` and returns `createBaseRepository(entityTarget)`, so one
 factory call wires every repository in your app to the same `DataSource`. The
