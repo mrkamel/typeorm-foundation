@@ -124,11 +124,22 @@ or a class of your own that wraps one.
 
 ## Errors
 
-Everything this library throws extends **`FoundationError`** (itself a plain
-`Error` subclass), so `catch (error) { if (error instanceof FoundationError) ... }`
-catches anything this library raises, as opposed to an error from your own
-code or a dependency.
+Everything this library throws extends **`FoundationError`**, an abstract
+`Error` subclass, so `catch (error) { if (isFoundationError(error)) ... }`
+catches anything this library raises, as opposed to an error from your own code
+or a dependency. Being abstract, `FoundationError` can't be constructed
+directly — throw one of the concrete errors below (`ValidationError` is the one
+you'd normally raise from your own `validateEntityOrFail` override).
 
+- **`ArgumentError`** — thrown when a call into the repository is malformed
+  rather than the data being invalid: `upsertEntity` with an empty `updates`
+  list or with an `updates`/`key` entry that maps to no column, and
+  `updateEntity`/`reload` on an entity whose class declares no primary key or
+  whose primary key isn't set.
+- **`MissingValidationContextError`** — thrown when something that needs the
+  validation context runs outside it, i.e. `isNew`/`isChanged`/`isDirty` or one
+  of the `ValidateWith`/`ValidateRelation`/`ValidateUniqueness` decorators
+  called outside a `validateOrFail` run.
 - **`NotFoundError`** — thrown by `reload` when the entity no longer exists.
 - **`ValidationError`** — thrown by `validateOrFail` (and so by
   `insertEntity`/`updateEntity`/`upsertEntity`); `error.errors` is a
@@ -136,6 +147,67 @@ code or a dependency.
   constructor also accepts a plain string (`new ValidationError('something went
   wrong')`), filed under the `base` key, for a validation failure that isn't tied
   to one field — e.g. from your own `validateEntityOrFail` override.
+
+Each error ships a matching type guard — **`isFoundationError`**,
+**`isArgumentError`**, **`isMissingValidationContextError`**,
+**`isNotFoundError`** and **`isValidationError`** — which narrow an `unknown`
+caught value to that error type. Prefer them over `instanceof`: the classes are
+resolved through a `globalThis` singleton, so the guards still match when two
+copies of this package end up in one dependency tree.
+
+For example, `reload` throws `NotFoundError` when the row has been deleted
+since the entity was loaded, which is usually a case you want to handle rather
+than propagate:
+
+```ts
+import { isNotFoundError } from 'typeorm-foundation';
+
+async function refreshUser(user: UserEntity) {
+  try {
+    return await UserRepository.reload(user);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+
+    // Someone deleted the row in the meantime.
+    return null;
+  }
+}
+```
+
+Re-throwing anything the guard rejects keeps unrelated failures (a dropped
+connection, an `ArgumentError` from an unset primary key) from being swallowed
+as a missing row.
+
+`validateOrFail` throws `ValidationError` when any decorator on the entity
+fails. `insertEntity`/`updateEntity`/`upsertEntity` call it for you, so this is
+the error you catch to turn a failed write into a per-field response — call it
+directly only to validate without writing:
+
+```ts
+import { isValidationError, validateOrFail } from 'typeorm-foundation';
+
+const user = UserRepository.create({ email: 'not-an-email' });
+
+try {
+  await validateOrFail({ entity: user, entityManager: dataSource.manager, original: null });
+} catch (error) {
+  if (!isValidationError(error)) throw error;
+
+  error.errors;  // { email: ['must be an email'] }
+  error.message; // 'email: must be an email'
+}
+```
+
+`errors` holds every failing message, grouped by property, with the leading
+property name stripped from each message so you can render it next to your own
+field label. `message` is those same entries flattened into one string.
+
+Pass `original` as the pre-update snapshot (or `null` for an insert) — it's what
+`isNew`/`isChanged`/`isDirty` read from, so a validator guarded by
+`validateIf: (user) => isDirty(user, 'email')` only runs when `original` says
+the field actually changed.
+
+`error.name` and `ValidationError`'s `errors` are `readonly`.
 
 ## Validation
 

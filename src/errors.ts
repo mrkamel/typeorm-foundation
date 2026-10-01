@@ -8,6 +8,14 @@ export const FoundationError = singleton('FoundationError', () => FoundationErro
 export type FoundationError = FoundationErrorClass;
 export const isFoundationError = (error: unknown): error is FoundationError => error instanceof FoundationError;
 
+class ArgumentErrorClass extends FoundationError {
+  override readonly name = 'ArgumentError';
+}
+
+export const ArgumentError = singleton('ArgumentError', () => ArgumentErrorClass);
+export type ArgumentError = ArgumentErrorClass;
+export const isArgumentError = (error: unknown): error is ArgumentError => error instanceof ArgumentError;
+
 class MissingValidationContextErrorClass extends FoundationError {
   override readonly name = 'MissingValidationContextError';
 }

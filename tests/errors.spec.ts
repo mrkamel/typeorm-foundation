@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ArgumentError,
   MissingValidationContextError,
   NotFoundError,
   ValidationError,
+  isArgumentError,
   isFoundationError,
   isMissingValidationContextError,
   isNotFoundError,
@@ -13,10 +15,34 @@ describe('isFoundationError', () => {
   it('accepts every error the library throws', () => {
     expect(isFoundationError(new NotFoundError('message'))).toBe(true);
     expect(isFoundationError(new ValidationError('message'))).toBe(true);
+    expect(isFoundationError(new ArgumentError('message'))).toBe(true);
+    expect(isFoundationError(new MissingValidationContextError('message'))).toBe(true);
   });
 
   it('rejects errors from outside the library', () => {
     expect(isFoundationError(new Error())).toBe(false);
+  });
+});
+
+describe('isArgumentError', () => {
+  it('accepts an ArgumentError only', () => {
+    expect(isArgumentError(new ArgumentError('message'))).toBe(true);
+    expect(isArgumentError(new ValidationError('message'))).toBe(false);
+  });
+
+  it('rejects errors from outside the library', () => {
+    expect(isArgumentError(new Error())).toBe(false);
+  });
+});
+
+describe('isMissingValidationContextError', () => {
+  it('accepts a MissingValidationContextError only', () => {
+    expect(isMissingValidationContextError(new MissingValidationContextError('message'))).toBe(true);
+    expect(isMissingValidationContextError(new ValidationError('message'))).toBe(false);
+  });
+
+  it('rejects errors from outside the library', () => {
+    expect(isMissingValidationContextError(new Error())).toBe(false);
   });
 });
 
@@ -39,16 +65,5 @@ describe('isValidationError', () => {
 
   it('rejects errors from outside the library', () => {
     expect(isValidationError(new Error())).toBe(false);
-  });
-});
-
-describe('isMissingValidationContextError', () => {
-  it('accepts a MissingValidationContextError only', () => {
-    expect(isMissingValidationContextError(new MissingValidationContextError('message'))).toBe(true);
-    expect(isMissingValidationContextError(new ValidationError('message'))).toBe(false);
-  });
-
-  it('rejects errors from outside the library', () => {
-    expect(isMissingValidationContextError(new Error())).toBe(false);
   });
 });
