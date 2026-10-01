@@ -29,8 +29,8 @@ export class UserEntity {
 
   @Column({ name: 'display_name', type: 'text', nullable: true })
   @ValidateWith<UserEntity, 'displayName'>((value) => {
-    if (value === 'reserved') return 'is reserved';
-  }, { message: 'is not allowed' })
+    if (value === 'reserved') return 'is not allowed';
+  })
   displayName!: string | null;
 
   @Column({ type: 'numeric', nullable: true, transformer: scoreTransformer })

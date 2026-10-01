@@ -212,9 +212,12 @@ allow passing a context, so `validateOrFail` sets up an `AsyncLocalStorage`
 context that gives decorators access to the transactional entity manager,
 which `insertEntity`/`updateEntity`/`upsertEntity` set up automatically.
 
-- **`ValidateWith(validate, { message? })`** — property decorator;
+- **`ValidateWith(validate)`** — property decorator;
   `validate(value, entity, entityManager)` returns an error string (or a
-  `Promise` of one) to fail, `undefined` to pass.
+  `Promise` of one) to fail, `undefined` to pass. The returned string is the
+  message, so there is no separate `message` option — to reuse a shared
+  predicate with a per-property message, wrap it: `ValidateWith((value) =>
+  isReserved(value) ? 'is not allowed' : undefined)`.
 - **`ValidateRelation(() => RelatedEntity, { with?, validateIf?, message? })`**
   — fails unless `value` is a valid primary key of `RelatedEntity`; the
   optional `with(relatedEntity, entity)` callback can reject further (e.g. a

@@ -69,7 +69,6 @@ export function isNew<Entity extends ObjectLiteral>(_entity: Entity) {
 
 export function ValidateWith<Entity extends object, Key extends Extract<keyof Entity, string>>(
   validate: (value: Entity[Key], entity: Entity, manager: EntityManager) => Promise<string | undefined> | string | undefined,
-  options?: { message?: MessageOption },
 ) {
   return function (target: Entity, propertyName: Key) {
     const name = `validateWith:${target.constructor.name}:${randomUUID()}`;
@@ -91,7 +90,7 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
 
           return true;
         },
-        defaultMessage: (validationArguments) => resolveMessage(validationArguments, options?.message) ?? getValidationContextOrFail().customErrors[name] ?? `${validationArguments?.property} is invalid`,
+        defaultMessage: (validationArguments) => getValidationContextOrFail().customErrors[name] ?? `${validationArguments?.property} is invalid`,
       },
     });
   };
