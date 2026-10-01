@@ -1,5 +1,5 @@
 import { validateOrFail } from './validations';
-import { BaseError, NotFoundError } from './errors';
+import { FoundationError, NotFoundError } from './errors';
 import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository } from 'typeorm';
 
 export type AtLeastOne<T, Keys extends keyof T = keyof T> = {
@@ -78,7 +78,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
         const isUpdateValues = !Array.isArray(updates);
 
         const updateProperties = isUpdateValues ? Object.keys(updates) as (keyof Entity)[] : updates;
-        if (!updateProperties.length) throw new BaseError('At least one update field must be specified for upsertEntity');
+        if (!updateProperties.length) throw new FoundationError('At least one update field must be specified for upsertEntity');
 
         if (isUpdateValues) Object.assign(entity, updates);
 
@@ -124,7 +124,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         return propertyNames.map((propertyName) => {
           const column = metadata.findColumnWithPropertyName(propertyName as string);
-          if (!column) throw new BaseError(`Unknown column for property ${String(propertyName)}`);
+          if (!column) throw new FoundationError(`Unknown column for property ${String(propertyName)}`);
 
           return column.databaseName;
         });
@@ -139,12 +139,12 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
         const entityName = metadata.name;
 
         const primaryKeyPropertyNames = metadata.columns.filter(column => column.isPrimary).map(column => column.propertyName);
-        if (primaryKeyPropertyNames.length === 0) throw new BaseError(`No primary key defined on entity ${entityName}`);
+        if (primaryKeyPropertyNames.length === 0) throw new FoundationError(`No primary key defined on entity ${entityName}`);
 
         const primaryKeyObject = Object.fromEntries(primaryKeyPropertyNames.map(key => [key, (entity as any)[key]]));
 
         if (Object.values(primaryKeyObject).some(value => value === null || value === undefined)) {
-          throw new BaseError(`Invalid primary key for ${entityName} entity: ${JSON.stringify(primaryKeyObject)}`);
+          throw new FoundationError(`Invalid primary key for ${entityName} entity: ${JSON.stringify(primaryKeyObject)}`);
         }
 
         return primaryKeyObject as FindOptionsWhere<Entity>;

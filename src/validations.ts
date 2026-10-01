@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { IsNull } from 'typeorm';
 import type { EntityManager, ObjectLiteral } from 'typeorm';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { BaseError, ValidationError } from './errors';
+import { FoundationError, ValidationError } from './errors';
+import { singleton } from './singleton';
 
 type ValidationContext = AsyncLocalStorage<{
   entityManager: EntityManager,
@@ -12,15 +13,12 @@ type ValidationContext = AsyncLocalStorage<{
   customErrors: Record<string, string>,
 }>;
 
-const validationContextKey = Symbol.for('typeorm-foundation:validationContext');
-const globalScope = globalThis as typeof globalThis & { [validationContextKey]?: ValidationContext };
-
-export const validationContext: ValidationContext = globalScope[validationContextKey] ??= new AsyncLocalStorage();
+export const validationContext = singleton<ValidationContext>('validationContext', () => new AsyncLocalStorage());
 
 export function getValidationContextOrFail() {
   const store = validationContext.getStore();
 
-  if (!store) throw new BaseError('Validation context is not available');
+  if (!store) throw new FoundationError('Validation context is not available');
 
   return store;
 }

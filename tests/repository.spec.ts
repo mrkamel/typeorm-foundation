@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { NotFoundError, BaseError, ValidationError, createRepositoryFactory } from '../src';
+import { NotFoundError, FoundationError, ValidationError, createRepositoryFactory } from '../src';
 import { database, dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 import { createFoundationRepository } from './repositories/createFoundationRepository';
 import { UserEntity } from './entities/UserEntity';
 
-describe('BaseError', () => {
+describe('FoundationError', () => {
   it('is the base class every library error extends', () => {
-    expect(new NotFoundError('not found')).toBeInstanceOf(BaseError);
-    expect(new ValidationError({})).toBeInstanceOf(BaseError);
+    expect(new NotFoundError('not found')).toBeInstanceOf(FoundationError);
+    expect(new ValidationError({})).toBeInstanceOf(FoundationError);
   });
 });
 
@@ -187,10 +187,10 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
     expect(stored.age).toBe(7);
   });
 
-  it('throws a BaseError when no update fields are given', async () => {
+  it('throws a FoundationError when no update fields are given', async () => {
     const user = UserRepository.create({ email: 'noupdates@example.com', age: null, teamId: null });
 
-    await expect(UserRepository.upsertEntity(user, { updates: [] as any })).rejects.toThrow(BaseError);
+    await expect(UserRepository.upsertEntity(user, { updates: [] as any })).rejects.toThrow(FoundationError);
     await expect(UserRepository.upsertEntity(user, { updates: [] as any })).rejects.toThrow('At least one update field must be specified for upsertEntity');
   });
 
