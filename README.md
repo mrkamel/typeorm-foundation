@@ -33,13 +33,17 @@ class UserEntity {
   @IsEmail()
   @ValidateUniqueness({ validateIf: (user) => isDirty(user, 'email') })
   email!: string;
+
+  constructor(values: Partial<UserEntity> = {}) {
+    Object.assign(this, values);
+  }
 }
 
 const dataSource = new DataSource({ /* ... */ });
 const createFoundationRepository = createRepositoryFactory();
 const UserRepository = createFoundationRepository(dataSource.getRepository(UserEntity));
 
-const user = await UserRepository.insertEntity(UserRepository.create({ email: 'ada@example.com' }));
+const user = await UserRepository.insertEntity(new UserEntity({ email: 'ada@example.com' }));
 await UserRepository.updateEntity(user, { email: 'ada@newdomain.com' });
 ```
 
@@ -178,18 +182,15 @@ Re-throwing anything the guard rejects keeps unrelated failures (a dropped
 connection, an `ArgumentError` from an unset primary key) from being swallowed
 as a missing row.
 
-`validateOrFail` throws `ValidationError` when any decorator on the entity
-fails. `insertEntity`/`updateEntity`/`upsertEntity` call it for you, so this is
-the error you catch to turn a failed write into a per-field response — call it
-directly only to validate without writing:
+`insertEntity`, `updateEntity` and `upsertEntity` validate before writing and
+throw `ValidationError` if any decorator on the entity fails, so nothing reaches
+the database. Catch it to turn a failed write into a per-field response:
 
 ```ts
-import { isValidationError, validateOrFail } from 'typeorm-foundation';
-
-const user = UserRepository.create({ email: 'not-an-email' });
+import { isValidationError } from 'typeorm-foundation';
 
 try {
-  await validateOrFail({ entity: user, entityManager: dataSource.manager, original: null });
+  await UserRepository.insertEntity(new UserEntity({ email: 'not-an-email' }));
 } catch (error) {
   if (!isValidationError(error)) throw error;
 
@@ -201,11 +202,6 @@ try {
 `errors` holds every failing message, grouped by property, with the leading
 property name stripped from each message so you can render it next to your own
 field label. `message` is those same entries flattened into one string.
-
-Pass `original` as the pre-update snapshot (or `null` for an insert) — it's what
-`isNew`/`isChanged`/`isDirty` read from, so a validator guarded by
-`validateIf: (user) => isDirty(user, 'email')` only runs when `original` says
-the field actually changed.
 
 `error.name` and `ValidationError`'s `errors` are `readonly`.
 

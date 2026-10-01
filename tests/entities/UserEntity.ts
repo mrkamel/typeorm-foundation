@@ -60,4 +60,8 @@ export class UserEntity {
   onAfterUpdate() {
     UserEntity.hookCalls.push('after');
   }
+
+  constructor(values: Partial<UserEntity> = {}) {
+    Object.assign(this, values);
+  }
 }

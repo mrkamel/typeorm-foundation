@@ -5,6 +5,7 @@ import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 import { createFoundationRepository } from './repositories/createFoundationRepository';
 import { UserEntity } from './entities/UserEntity';
+import { TeamEntity } from './entities/TeamEntity';
 
 describe('FoundationError', () => {
   it('is the base class every library error extends', () => {
@@ -15,7 +16,7 @@ describe('FoundationError', () => {
 
 describe('insertEntity', () => {
   it('inserts a valid entity', async () => {
-    const user = UserRepository.create({ email: 'ada@example.com', age: 30, teamId: null });
+    const user = new UserEntity({ email: 'ada@example.com', age: 30, teamId: null });
 
     await UserRepository.insertEntity(user);
 
@@ -24,7 +25,7 @@ describe('insertEntity', () => {
   });
 
   it('throws a ValidationError for an invalid entity', async () => {
-    const user = UserRepository.create({ email: 'not-an-email', age: -1, teamId: null });
+    const user = new UserEntity({ email: 'not-an-email', age: -1, teamId: null });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow(ValidationError);
   });
@@ -32,7 +33,7 @@ describe('insertEntity', () => {
   it('calls validateEntityOrFail with null to run all field validations', async () => {
     const repository = createFoundationRepository(dataSource.getRepository(UserEntity));
     const validateEntityOrFailSpy = vi.spyOn(repository, 'validateEntityOrFail');
-    const user = repository.create({ email: 'spy@example.com', age: null, teamId: null });
+    const user = new UserEntity({ email: 'spy@example.com', age: null, teamId: null });
 
     await repository.insertEntity(user);
 
@@ -40,29 +41,29 @@ describe('insertEntity', () => {
   });
 
   it('rejects a duplicate email', async () => {
-    await UserRepository.insertEntity(UserRepository.create({ email: 'dup@example.com', age: null, teamId: null }));
+    await UserRepository.insertEntity(new UserEntity({ email: 'dup@example.com', age: null, teamId: null }));
 
     await expect(
-      UserRepository.insertEntity(UserRepository.create({ email: 'dup@example.com', age: null, teamId: null }))
+      UserRepository.insertEntity(new UserEntity({ email: 'dup@example.com', age: null, teamId: null }))
     ).rejects.toThrow(ValidationError);
   });
 
   it('rejects a teamId that does not exist', async () => {
-    const user = UserRepository.create({ email: 'noteam@example.com', age: null, teamId: '00000000-0000-0000-0000-000000000000' });
+    const user = new UserEntity({ email: 'noteam@example.com', age: null, teamId: '00000000-0000-0000-0000-000000000000' });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow(ValidationError);
   });
 
   it('rejects a teamId belonging to an archived team', async () => {
-    const team = await TeamRepository.insertEntity(TeamRepository.create({ name: 'Retired', code: 'retired-1', archived: true }));
-    const user = UserRepository.create({ email: 'archived@example.com', age: null, teamId: team.id });
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Retired', code: 'retired-1', archived: true }));
+    const user = new UserEntity({ email: 'archived@example.com', age: null, teamId: team.id });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow('team is archived');
   });
 
   it('accepts a teamId that exists and is not archived', async () => {
-    const team = await TeamRepository.insertEntity(TeamRepository.create({ name: 'Engineering', code: 'eng-1', archived: false }));
-    const user = UserRepository.create({ email: 'hasteam@example.com', age: null, teamId: team.id });
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Engineering', code: 'eng-1', archived: false }));
+    const user = new UserEntity({ email: 'hasteam@example.com', age: null, teamId: team.id });
 
     await UserRepository.insertEntity(user);
 
@@ -71,7 +72,7 @@ describe('insertEntity', () => {
   });
 
   it('rejects a reserved display name with its custom message', async () => {
-    const user = UserRepository.create({ email: 'reserved@example.com', age: null, teamId: null, displayName: 'reserved' });
+    const user = new UserEntity({ email: 'reserved@example.com', age: null, teamId: null, displayName: 'reserved' });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow('is not allowed');
   });
@@ -79,7 +80,7 @@ describe('insertEntity', () => {
 
 describe('updateEntity', () => {
   it('is a no-op when there are no updates', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'noop@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'noop@example.com', age: null, teamId: null }));
     const updatedAt = user.updatedAt;
 
     await UserRepository.updateEntity(user, {});
@@ -88,7 +89,7 @@ describe('updateEntity', () => {
   });
 
   it('persists changes and bumps every update-date column', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'change@example.com', age: 20, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'change@example.com', age: 20, teamId: null }));
     const updatedAt = user.updatedAt;
     const syncedAt = user.syncedAt;
 
@@ -102,7 +103,7 @@ describe('updateEntity', () => {
   });
 
   it('does not override an explicitly provided update-date column', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'explicit@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'explicit@example.com', age: null, teamId: null }));
     const explicitDate = new Date('2020-01-01T00:00:00Z');
 
     await UserRepository.updateEntity(user, { age: 1, updatedAt: explicitDate });
@@ -112,7 +113,7 @@ describe('updateEntity', () => {
   });
 
   it('skips the update call when no registered column actually changed', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'unchanged-value@example.com', age: 5, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'unchanged-value@example.com', age: 5, teamId: null }));
     const updatedAt = user.updatedAt;
 
     const result = await UserRepository.updateEntity(user, { age: 5 });
@@ -121,20 +122,20 @@ describe('updateEntity', () => {
   });
 
   it('does not re-validate an unchanged unique field', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'unchanged@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'unchanged@example.com', age: null, teamId: null }));
 
     await expect(UserRepository.updateEntity(user, { age: 5 })).resolves.toBeDefined();
   });
 
   it('rejects updating to an email already taken by another row', async () => {
-    await UserRepository.insertEntity(UserRepository.create({ email: 'taken@example.com', age: null, teamId: null }));
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'free@example.com', age: null, teamId: null }));
+    await UserRepository.insertEntity(new UserEntity({ email: 'taken@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'free@example.com', age: null, teamId: null }));
 
     await expect(UserRepository.updateEntity(user, { email: 'taken@example.com' })).rejects.toThrow(ValidationError);
   });
 
   it('runs beforeUpdate then afterUpdate listeners around the persisted change', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'listeners@example.com', age: 1, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'listeners@example.com', age: 1, teamId: null }));
 
     await UserRepository.updateEntity(user, { age: 2 });
 
@@ -142,7 +143,7 @@ describe('updateEntity', () => {
   });
 
   it('still runs listeners even when no registered column actually changed', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'listeners-noop@example.com', age: 3, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'listeners-noop@example.com', age: 3, teamId: null }));
 
     await UserRepository.updateEntity(user, { age: 3 });
 
@@ -150,7 +151,7 @@ describe('updateEntity', () => {
   });
 
   it('skips validation and listeners when the updates object is empty', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'listeners-skip@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'listeners-skip@example.com', age: null, teamId: null }));
 
     await UserRepository.updateEntity(user, {});
 
@@ -160,7 +161,7 @@ describe('updateEntity', () => {
 
 describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   it('inserts a new row on conflict-free values', async () => {
-    const user = UserRepository.create({ email: 'fresh@example.com', age: null, teamId: null });
+    const user = new UserEntity({ email: 'fresh@example.com', age: null, teamId: null });
 
     await UserRepository.upsertEntity(user, { updates: ['age'], key: ['id'] });
 
@@ -169,16 +170,16 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   });
 
   it('updates the row on a conflicting key', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'conflict@example.com', age: 1, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'conflict@example.com', age: 1, teamId: null }));
 
-    await UserRepository.upsertEntity(UserRepository.create({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'], key: ['id'] });
+    await UserRepository.upsertEntity(new UserEntity({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'], key: ['id'] });
 
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
     expect(stored.age).toBe(2);
   });
 
   it('accepts an object of values for updates, merging them onto the entity', async () => {
-    const user = UserRepository.create({ email: 'objectform@example.com', teamId: null });
+    const user = new UserEntity({ email: 'objectform@example.com', teamId: null });
 
     await UserRepository.upsertEntity(user, { updates: { age: 7 }, key: ['id'] });
 
@@ -188,29 +189,29 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   });
 
   it('throws a FoundationError when no update fields are given', async () => {
-    const user = UserRepository.create({ email: 'noupdates@example.com', age: null, teamId: null });
+    const user = new UserEntity({ email: 'noupdates@example.com', age: null, teamId: null });
 
     await expect(UserRepository.upsertEntity(user, { updates: [] as any })).rejects.toThrow(FoundationError);
     await expect(UserRepository.upsertEntity(user, { updates: [] as any })).rejects.toThrow('At least one update field must be specified for upsertEntity');
   });
 
   it('automatically bumps update-date columns not already in updates', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'autobump@example.com', age: 1, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'autobump@example.com', age: 1, teamId: null }));
     const updatedAt = user.updatedAt;
 
     await new Promise((resolve) => setTimeout(resolve, 10));
-    await UserRepository.upsertEntity(UserRepository.create({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'], key: ['id'] });
+    await UserRepository.upsertEntity(new UserEntity({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'], key: ['id'] });
 
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
     expect(stored.updatedAt.getTime()).toBeGreaterThan(updatedAt.getTime());
   });
 
   it('does not override an explicitly provided update-date column', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'explicit-upsert@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'explicit-upsert@example.com', age: null, teamId: null }));
     const explicitDate = new Date('2020-01-01T00:00:00Z');
 
     await UserRepository.upsertEntity(
-      UserRepository.create({ id: user.id, email: user.email, age: 1, teamId: null, updatedAt: explicitDate }),
+      new UserEntity({ id: user.id, email: user.email, age: 1, teamId: null, updatedAt: explicitDate }),
       { updates: ['age', 'updatedAt'] as any, key: ['id'] }
     );
 
@@ -219,7 +220,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   });
 
   it('uses the @Column({ name }) database name in the conflict clause and RETURNING * hydration', async () => {
-    const user = UserRepository.create({ email: 'dbname@example.com', age: null, teamId: null, displayName: 'Ada' });
+    const user = new UserEntity({ email: 'dbname@example.com', age: null, teamId: null, displayName: 'Ada' });
 
     await UserRepository.upsertEntity(user, { updates: ['displayName'] as any, key: ['id'] });
 
@@ -231,7 +232,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   });
 
   it('applies the column transformer to values returned from RETURNING * before assigning them onto the entity', async () => {
-    const user = UserRepository.create({ email: 'transformer@example.com', age: null, teamId: null, score: 42 });
+    const user = new UserEntity({ email: 'transformer@example.com', age: null, teamId: null, score: 42 });
 
     const result = await UserRepository.upsertEntity(user, { updates: ['score'] as any, key: ['id'] });
 
@@ -248,7 +249,7 @@ describe('upsertOrFailBy', () => {
   });
 
   it('updates when a matching row exists', async () => {
-    await UserRepository.insertEntity(UserRepository.create({ email: 'existing@example.com', age: 1, teamId: null }));
+    await UserRepository.insertEntity(new UserEntity({ email: 'existing@example.com', age: 1, teamId: null }));
 
     const user = await UserRepository.upsertOrFailBy({ email: 'existing@example.com' }, { age: 2 });
 
@@ -258,7 +259,7 @@ describe('upsertOrFailBy', () => {
 
 describe('removeEntity', () => {
   it('removes the row and leaves the original entity object with its primary key intact', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'removeme@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'removeme@example.com', age: null, teamId: null }));
     const id = user.id;
 
     const result = await UserRepository.removeEntity(user);
@@ -271,7 +272,7 @@ describe('removeEntity', () => {
 
 describe('reload', () => {
   it('throws NotFoundError once the row has been removed', async () => {
-    const user = await UserRepository.insertEntity(UserRepository.create({ email: 'reloadme@example.com', age: null, teamId: null }));
+    const user = await UserRepository.insertEntity(new UserEntity({ email: 'reloadme@example.com', age: null, teamId: null }));
 
     await UserRepository.removeEntity(user);
 
@@ -282,7 +283,7 @@ describe('reload', () => {
 describe('custom extensions passed into the factory', () => {
   it('exposes the extension function on every repository the factory creates', async () => {
     for (let index = 0; index < 3; index += 1) {
-      await UserRepository.insertEntity(UserRepository.create({ email: `count${index}@example.com`, age: null, teamId: null }));
+      await UserRepository.insertEntity(new UserEntity({ email: `count${index}@example.com`, age: null, teamId: null }));
     }
 
     await expect(UserRepository.countAll()).resolves.toBe(3);
@@ -293,7 +294,7 @@ describe('custom extensions passed into the factory', () => {
     const bareCreateFoundationRepository = createRepositoryFactory();
     const repository = bareCreateFoundationRepository(dataSource.getRepository(UserEntity));
 
-    const user = await repository.insertEntity(repository.create({ email: 'bare@example.com', age: null, teamId: null }));
+    const user = await repository.insertEntity(new UserEntity({ email: 'bare@example.com', age: null, teamId: null }));
 
     const stored = await repository.findOneOrFail({ where: { id: user.id } });
     expect(stored.email).toBe('bare@example.com');
@@ -323,7 +324,7 @@ describe('override', () => {
 
   it('lets a custom method call other repository methods via this', async () => {
     const repository = createFoundationRepository(dataSource.getRepository(UserEntity));
-    const user = await repository.insertEntity(repository.create({ email: 'override@example.com', age: null, teamId: null }));
+    const user = await repository.insertEntity(new UserEntity({ email: 'override@example.com', age: null, teamId: null }));
 
     const result = repository.override({
       async touchAndReload(entity: UserEntity) {
