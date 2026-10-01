@@ -28,11 +28,12 @@ describe('ValidationError', () => {
 });
 
 describe('ValidateWith', () => {
-  it('uses the custom message option instead of the message returned by the validator', async () => {
+  it('fails with the message returned by the validator', async () => {
     const user = new UserEntity({ email: 'msg@example.com', age: null, teamId: null, displayName: 'reserved' });
 
-    await expect(UserRepository.insertEntity(user)).rejects.toThrow('is not allowed');
+    await expect(UserRepository.insertEntity(user)).rejects.toThrow('displayName: is not allowed');
   });
+
 
   it('passes when the validator returns no message', async () => {
     const user = new UserEntity({ email: 'msg2@example.com', age: null, teamId: null, displayName: 'Ada' });
