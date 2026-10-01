@@ -1,6 +1,6 @@
 {
   "name": "typeorm-foundation",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Base repository and entity validation building blocks for TypeORM.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

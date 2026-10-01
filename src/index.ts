@@ -1,6 +1,13 @@
 export { createRepositoryFactory } from './repository';
 export type { AtLeastOne, FoundationRepository } from './repository';
-export { FoundationError, NotFoundError, ValidationError } from './errors';
+export {
+  FoundationError,
+  NotFoundError,
+  ValidationError,
+  isFoundationError,
+  isNotFoundError,
+  isValidationError,
+} from './errors';
 
 export {
   validateOrFail,
