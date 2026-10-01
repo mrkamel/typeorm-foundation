@@ -1,8 +1,28 @@
-export class BaseError extends Error { }
+import { singleton } from './singleton';
 
-export class NotFoundError extends BaseError { }
+class FoundationErrorClass extends Error {
+  constructor(message?: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'FoundationError';
+  }
+}
 
-export class ValidationError extends BaseError {
+export const FoundationError = singleton('FoundationError', () => FoundationErrorClass);
+export type FoundationError = FoundationErrorClass;
+export const isFoundationError = (error: unknown): error is FoundationError => error instanceof FoundationError;
+
+class NotFoundErrorClass extends FoundationError {
+  constructor(message?: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'NotFoundError';
+  }
+}
+
+export const NotFoundError = singleton('NotFoundError', () => NotFoundErrorClass);
+export type NotFoundError = NotFoundErrorClass;
+export const isNotFoundError = (error: unknown): error is NotFoundError => error instanceof NotFoundError;
+
+class ValidationErrorClass extends FoundationError {
   errors: Record<string, string[]>;
 
   constructor(errors: string | Record<string, string[]>) {
@@ -14,3 +34,7 @@ export class ValidationError extends BaseError {
     this.errors = normalizedErrors;
   }
 }
+
+export const ValidationError = singleton('ValidationError', () => ValidationErrorClass);
+export type ValidationError = ValidationErrorClass;
+export const isValidationError = (error: unknown): error is ValidationError => error instanceof ValidationError;

@@ -124,8 +124,8 @@ or a class of your own that wraps one.
 
 ## Errors
 
-Everything this library throws extends **`BaseError`** (itself a plain
-`Error` subclass), so `catch (error) { if (error instanceof BaseError) ... }`
+Everything this library throws extends **`FoundationError`** (itself a plain
+`Error` subclass), so `catch (error) { if (error instanceof FoundationError) ... }`
 catches anything this library raises, as opposed to an error from your own
 code or a dependency.
 
