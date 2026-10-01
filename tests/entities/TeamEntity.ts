@@ -19,4 +19,8 @@ export class TeamEntity {
   @Column({ type: 'boolean', default: false })
   @IsBoolean()
   archived!: boolean;
+
+  constructor(values: Partial<TeamEntity> = {}) {
+    Object.assign(this, values);
+  }
 }
