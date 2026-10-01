@@ -129,7 +129,7 @@ or a class of your own that wraps one.
 ## Errors
 
 Everything this library throws extends **`FoundationError`**, an abstract
-`Error` subclass, so `catch (error) { if (isFoundationError(error)) ... }`
+`Error` subclass, so `catch (error) { if (error instanceof FoundationError) ... }`
 catches anything this library raises, as opposed to an error from your own code
 or a dependency. Being abstract, `FoundationError` can't be constructed
 directly — throw one of the concrete errors below (`ValidationError` is the one
@@ -152,25 +152,26 @@ you'd normally raise from your own `validateEntityOrFail` override).
   wrong')`), filed under the `base` key, for a validation failure that isn't tied
   to one field — e.g. from your own `validateEntityOrFail` override.
 
-Each error ships a matching type guard — **`isFoundationError`**,
-**`isArgumentError`**, **`isMissingValidationContextError`**,
-**`isNotFoundError`** and **`isValidationError`** — which narrow an `unknown`
-caught value to that error type. Prefer them over `instanceof`: the classes are
-resolved through a `globalThis` singleton, so the guards still match when two
-copies of this package end up in one dependency tree.
+Use plain `instanceof` to narrow a caught `unknown` to one of these errors. It
+is safe even under dual module loading: each error class is registered on
+`globalThis` under a version-scoped `Symbol.for(...)` key, so the ESM and CJS
+builds of this package — or two copies of it in one dependency tree — resolve
+to the very same class object, and an error thrown through one import matches
+`instanceof` through the other. (Genuinely different versions of the package
+get different keys, and so stay separate classes, as they should.)
 
 For example, `reload` throws `NotFoundError` when the row has been deleted
 since the entity was loaded, which is usually a case you want to handle rather
 than propagate:
 
 ```ts
-import { isNotFoundError } from 'typeorm-foundation';
+import { NotFoundError } from 'typeorm-foundation';
 
 async function refreshUser(user: UserEntity) {
   try {
     return await UserRepository.reload(user);
   } catch (error) {
-    if (!isNotFoundError(error)) throw error;
+    if (!(error instanceof NotFoundError)) throw error;
 
     // Someone deleted the row in the meantime.
     return null;
@@ -178,7 +179,7 @@ async function refreshUser(user: UserEntity) {
 }
 ```
 
-Re-throwing anything the guard rejects keeps unrelated failures (a dropped
+Re-throwing anything the check rejects keeps unrelated failures (a dropped
 connection, an `ArgumentError` from an unset primary key) from being swallowed
 as a missing row.
 
@@ -187,12 +188,12 @@ throw `ValidationError` if any decorator on the entity fails, so nothing reaches
 the database. Catch it to turn a failed write into a per-field response:
 
 ```ts
-import { isValidationError } from 'typeorm-foundation';
+import { ValidationError } from 'typeorm-foundation';
 
 try {
   await UserRepository.insertEntity(new UserEntity({ email: 'not-an-email' }));
 } catch (error) {
-  if (!isValidationError(error)) throw error;
+  if (!(error instanceof ValidationError)) throw error;
 
   error.errors;  // { email: ['must be an email'] }
   error.message; // 'email: must be an email'

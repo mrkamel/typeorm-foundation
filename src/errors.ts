@@ -6,7 +6,6 @@ abstract class FoundationErrorClass extends Error {
 
 export const FoundationError = singleton('FoundationError', () => FoundationErrorClass);
 export type FoundationError = FoundationErrorClass;
-export const isFoundationError = (error: unknown): error is FoundationError => error instanceof FoundationError;
 
 class ArgumentErrorClass extends FoundationError {
   override readonly name = 'ArgumentError';
@@ -14,7 +13,6 @@ class ArgumentErrorClass extends FoundationError {
 
 export const ArgumentError = singleton('ArgumentError', () => ArgumentErrorClass);
 export type ArgumentError = ArgumentErrorClass;
-export const isArgumentError = (error: unknown): error is ArgumentError => error instanceof ArgumentError;
 
 class MissingValidationContextErrorClass extends FoundationError {
   override readonly name = 'MissingValidationContextError';
@@ -22,7 +20,6 @@ class MissingValidationContextErrorClass extends FoundationError {
 
 export const MissingValidationContextError = singleton('MissingValidationContextError', () => MissingValidationContextErrorClass);
 export type MissingValidationContextError = MissingValidationContextErrorClass;
-export const isMissingValidationContextError = (error: unknown): error is MissingValidationContextError => error instanceof MissingValidationContextError;
 
 class NotFoundErrorClass extends FoundationError {
   override readonly name = 'NotFoundError';
@@ -30,7 +27,6 @@ class NotFoundErrorClass extends FoundationError {
 
 export const NotFoundError = singleton('NotFoundError', () => NotFoundErrorClass);
 export type NotFoundError = NotFoundErrorClass;
-export const isNotFoundError = (error: unknown): error is NotFoundError => error instanceof NotFoundError;
 
 class ValidationErrorClass extends FoundationError {
   override readonly name = 'ValidationError';
@@ -48,4 +44,3 @@ class ValidationErrorClass extends FoundationError {
 
 export const ValidationError = singleton('ValidationError', () => ValidationErrorClass);
 export type ValidationError = ValidationErrorClass;
-export const isValidationError = (error: unknown): error is ValidationError => error instanceof ValidationError;
