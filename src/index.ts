@@ -8,6 +8,6 @@ export {
   isDirty,
   isNew,
   ValidateWith,
-  ValidateRelation,
-  ValidateUniqueness,
+  References,
+  IsUnique,
 } from './validations';

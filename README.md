@@ -22,7 +22,7 @@ Peer dependencies (bring your own versions): `typeorm`, `class-validator`.
 import { DataSource } from 'typeorm';
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { IsEmail } from 'class-validator';
-import { createRepositoryFactory, isDirty, ValidateUniqueness } from 'typeorm-foundation';
+import { createRepositoryFactory, isDirty, IsUnique } from 'typeorm-foundation';
 
 @Entity('users')
 class UserEntity {
@@ -31,7 +31,7 @@ class UserEntity {
 
   @Column({ type: 'text' })
   @IsEmail()
-  @ValidateUniqueness({ validateIf: (user) => isDirty(user, 'email') })
+  @IsUnique({ validateIf: (user) => isDirty(user, 'email') })
   email!: string;
 
   constructor(values: Partial<UserEntity> = {}) {
@@ -142,8 +142,8 @@ you'd normally raise from your own `validateEntityOrFail` override).
   whose primary key isn't set.
 - **`MissingValidationContextError`** — thrown when something that needs the
   validation context runs outside it, i.e. `isNew`/`isChanged`/`isDirty` or one
-  of the `ValidateWith`/`ValidateRelation`/`ValidateUniqueness` decorators
-  called outside a `validateOrFail` run.
+  of the `ValidateWith`/`References`/`IsUnique` decorators called outside a
+  `validateOrFail` run.
 - **`NotFoundError`** — thrown by `reload` when the entity no longer exists.
 - **`ValidationError`** — thrown by `validateOrFail` (and so by
   `insertEntity`/`updateEntity`/`upsertEntity`); `error.errors` is a
@@ -219,13 +219,19 @@ which `insertEntity`/`updateEntity`/`upsertEntity` set up automatically.
   message, so there is no separate `message` option — to reuse a shared
   predicate with a per-property message, wrap it: `ValidateWith((value) =>
   isReserved(value) ? 'is not allowed' : undefined)`.
-- **`ValidateRelation(() => RelatedEntity, { with?, validateIf?, message? })`**
-  — fails unless `value` is a valid primary key of `RelatedEntity`; the
-  optional `with(relatedEntity, entity)` callback can reject further (e.g. a
-  status check) after the row is found.
-- **`ValidateUniqueness({ scope?, validateIf?, message? })`** — fails if
+- **`References(() => RelatedEntity, { validate?, validateIf?, message? })`** —
+  fails unless `value` is a valid primary key of `RelatedEntity`; the optional
+  `validate(relatedEntity, entity)` callback can reject further (e.g. a status
+  check) after the row is found, returning an error string the same way
+  `ValidateWith` does.
+- **`IsUnique({ scope?, caseInsensitive?, validateIf?, message? })`** — fails if
   another row (excluding the entity's own primary key) already has this value,
-  optionally scoped to a set of sibling columns.
+  optionally scoped to a set of sibling columns. `caseInsensitive` makes the
+  comparison ignore case by normalising both sides with SQL `UPPER()`
+  (`'upper'`) or `LOWER()` (`'lower'`) — pick whichever matches a functional
+  index you have, so the lookup can still use it. Left undefined (the default),
+  the value is compared as-is. It applies to the decorated property only, not to
+  `scope` columns, and only when the value is a string.
 - **`isNew(entity)` / `isChanged(entity, property)` /
   `isDirty(entity, property)`** — call from inside a validator (or an entity's own
   `@ValidateIf`) to check the entity against the pre-update snapshot: `isNew` is
