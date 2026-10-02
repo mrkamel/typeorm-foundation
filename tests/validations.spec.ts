@@ -42,21 +42,21 @@ describe('ValidateWith', () => {
   });
 });
 
-describe('ValidateRelation', () => {
+describe('References', () => {
   it('fails with the default message when the referenced team does not exist', async () => {
     const user = new UserEntity({ email: 'norelation@example.com', age: null, teamId: '00000000-0000-0000-0000-000000000000' });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow('teamId: reference is invalid');
   });
 
-  it('fails with the message from the with callback when the team is archived', async () => {
+  it('fails with the message from the validate callback when the team is archived', async () => {
     const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Retired', code: 'retired-2', archived: true }));
     const user = new UserEntity({ email: 'withcallback@example.com', age: null, teamId: team.id });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow('team is archived');
   });
 
-  it('passes when the with callback returns no message', async () => {
+  it('passes when the validate callback returns no message', async () => {
     const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Active', code: 'active-1', archived: false }));
     const user = new UserEntity({ email: 'withcallback2@example.com', age: null, teamId: team.id });
 
@@ -70,7 +70,7 @@ describe('ValidateRelation', () => {
   });
 });
 
-describe('ValidateUniqueness', () => {
+describe('IsUnique', () => {
   it('allows saving an entity when the unique field is untouched', async () => {
     const user = await UserRepository.insertEntity(new UserEntity({ email: 'stable@example.com', age: null, teamId: null }));
 
@@ -98,6 +98,28 @@ describe('ValidateUniqueness', () => {
     await expect(
       TeamRepository.insertEntity(new TeamEntity({ name: 'Support 2', code: 'support', archived: false }))
     ).rejects.toThrow(ValidationError);
+  });
+
+  it('rejects a duplicate that differs only in case when caseInsensitive is set', async () => {
+    await TeamRepository.insertEntity(new TeamEntity({ name: 'Design', code: 'design', slug: 'Design-Team', archived: false }));
+
+    await expect(
+      TeamRepository.insertEntity(new TeamEntity({ name: 'Design 2', code: 'design-2', slug: 'design-TEAM', archived: false }))
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it('still allows a genuinely different value when caseInsensitive is set', async () => {
+    await TeamRepository.insertEntity(new TeamEntity({ name: 'Legal', code: 'legal', slug: 'legal-team', archived: false }));
+
+    await expect(
+      TeamRepository.insertEntity(new TeamEntity({ name: 'Legal 2', code: 'legal-2', slug: 'legal-team-2', archived: false }))
+    ).resolves.toBeDefined();
+  });
+
+  it('ignores case differences against the entity itself when caseInsensitive is set', async () => {
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Ops', code: 'ops', slug: 'ops-team', archived: false }));
+
+    await expect(TeamRepository.updateEntity(team, { slug: 'OPS-TEAM' })).resolves.toMatchObject({ slug: 'OPS-TEAM' });
   });
 
   it('skips re-validation when the scoped field is untouched by the update', async () => {

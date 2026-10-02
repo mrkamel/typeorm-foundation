@@ -1,7 +1,7 @@
 import { registerDecorator, validate } from 'class-validator';
 import type { ValidationArguments } from 'class-validator';
 import { randomUUID } from 'node:crypto';
-import { IsNull } from 'typeorm';
+import { IsNull, Raw } from 'typeorm';
 import type { EntityManager, ObjectLiteral } from 'typeorm';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { MissingValidationContextError, ValidationError } from './errors';
@@ -47,6 +47,15 @@ function resolveMessage(validationArguments: ValidationArguments | undefined, me
   if (!message) return;
 
   return typeof message === 'function' ? message(validationArguments) : message;
+}
+
+function matchValue(value: unknown, caseInsensitive: 'upper' | 'lower' | undefined) {
+  if (value === null) return IsNull();
+  if (!caseInsensitive || typeof value !== 'string') return value;
+
+  const fn = caseInsensitive === 'upper' ? 'UPPER' : 'LOWER';
+
+  return Raw((columnAlias) => `${fn}(${columnAlias}) = ${fn}(:uniquenessValue)`, { uniquenessValue: value });
 }
 
 export function isChanged<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(entity: Entity, property: Key) {
@@ -96,12 +105,12 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
   };
 }
 
-export function ValidateRelation<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>, Related = any>(
+export function References<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>, Related = any>(
   relatedEntity: () => Function,
-  options?: { with?: (related: Related, entity: Entity) => Promise<string | undefined> | string | undefined, validateIf?: (entity: Entity) => boolean, message?: MessageOption },
+  options?: { validate?: (related: Related, entity: Entity) => Promise<string | undefined> | string | undefined, validateIf?: (entity: Entity) => boolean, message?: MessageOption },
 ) {
   return function (target: Entity, propertyName: Key) {
-    const name = `validateRelation:${target.constructor.name}:${randomUUID()}`;
+    const name = `references:${target.constructor.name}:${randomUUID()}`;
 
     registerDecorator({
       name,
@@ -125,8 +134,8 @@ export function ValidateRelation<Entity extends ObjectLiteral, Key extends Extra
 
           if (!existing) return false;
 
-          if (options?.with) {
-            const errorMessage = await options.with(existing as Related, entity);
+          if (options?.validate) {
+            const errorMessage = await options.validate(existing as Related, entity);
 
             if (errorMessage) {
               context.customErrors[name] = errorMessage;
@@ -142,12 +151,12 @@ export function ValidateRelation<Entity extends ObjectLiteral, Key extends Extra
   };
 }
 
-export function ValidateUniqueness<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(
-  options?: { scope?: Extract<keyof Entity, string>[], validateIf?: (entity: Entity) => boolean, message?: MessageOption },
+export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(
+  options?: { scope?: Extract<keyof Entity, string>[], caseInsensitive?: 'upper' | 'lower', validateIf?: (entity: Entity) => boolean, message?: MessageOption },
 ) {
   return function (target: Entity, propertyName: Key) {
     registerDecorator({
-      name: `validateUniqueness:${target.constructor.name}:${randomUUID()}`,
+      name: `isUnique:${target.constructor.name}:${randomUUID()}`,
       target: target.constructor,
       propertyName,
       validator: {
@@ -166,7 +175,7 @@ export function ValidateUniqueness<Entity extends ObjectLiteral, Key extends Ext
 
           const scope = Object.fromEntries(scopeEntries.map(([key, scopeValue]) => [key, scopeValue === null ? IsNull() : scopeValue]));
 
-          const existing = await repository.find({ where: { [propertyName]: value === null ? IsNull() : value, ...scope }, take: 2 });
+          const existing = await repository.find({ where: { [propertyName]: matchValue(value, options?.caseInsensitive), ...scope }, take: 2 });
 
           const primaryColumns = context.entityManager.dataSource.getMetadata(entity.constructor).primaryColumns.map(column => column.propertyName);
           const hasPrimaryKeyValue = primaryColumns.length > 0 && primaryColumns.every(key => (entity as any)[key] != null);
