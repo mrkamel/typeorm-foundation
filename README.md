@@ -233,6 +233,19 @@ endsAt!: Date;
 Without that, `endsAt` would be checked against a `startsAt` that the first
 pass had already rejected.
 
+The second pass only has something to check if the properties it depends on
+carry standard decorators, so give every property with a decorator from this
+library the type validation its column needs — otherwise nothing can fail in
+the first pass and the value reaches the query unchecked:
+
+```ts
+@Column({ type: 'text', nullable: true })
+@IsOptional()
+@IsUUID()
+@References<UserEntity, 'teamId', TeamEntity>(() => TeamEntity)
+teamId!: string | null;
+```
+
 - **`ValidateWith(validate, { dependencies? })`** — property decorator;
   `validate(value, entity, entityManager)` returns an error string (or a
   `Promise` of one) to fail, `undefined` to pass. The returned string is the
