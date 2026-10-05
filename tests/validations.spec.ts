@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
+import { IsString } from 'class-validator';
 import { ValidationError } from '../src';
 import { isChanged, isDirty, isNew, validateOrFail, validationContext, ValidateWith } from '../src/validations';
 import { UserRepository } from './repositories/UserRepository';
@@ -130,6 +131,67 @@ describe('IsUnique', () => {
   });
 });
 
+describe('dependencies', () => {
+  it('skips the uniqueness lookup when a scope property is invalid', async () => {
+    await TeamRepository.insertEntity(new TeamEntity({ name: 'Taken', code: 'taken', archived: false }));
+
+    const team = new TeamEntity({ name: 'Second', code: 'taken', archived: 'maybe' as unknown as boolean });
+    const error = await TeamRepository.insertEntity(team).catch((error: unknown) => error) as ValidationError;
+
+    expect(Object.keys(error.errors)).toEqual(['archived']);
+  });
+
+  it('still validates properties whose dependencies came through the standard pass', async () => {
+    const user = new UserEntity({ email: 'not-an-email', age: null, teamId: '00000000-0000-0000-0000-000000000000' });
+    const error = await UserRepository.insertEntity(user).catch((error: unknown) => error) as ValidationError;
+
+    expect(Object.keys(error.errors).sort()).toEqual(['email', 'teamId']);
+  });
+
+  it('skips a validator when its own property is invalid', async () => {
+    const calls: unknown[] = [];
+
+    class OwnPropertyEntity {
+      @IsString()
+      @ValidateWith<OwnPropertyEntity, 'name'>((value) => void calls.push(value))
+      name: unknown = 42;
+    }
+
+    await expect(validateOrFail({ entity: new OwnPropertyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    expect(calls).toEqual([]);
+  });
+
+  it('skips a validator when a declared dependency is invalid', async () => {
+    const calls: unknown[] = [];
+
+    class DeclaredDependencyEntity {
+      @IsString()
+      code: unknown = 42;
+
+      @ValidateWith<DeclaredDependencyEntity, 'label'>((value) => void calls.push(value), { dependencies: ['code'] })
+      label = 'fine';
+    }
+
+    await expect(validateOrFail({ entity: new DeclaredDependencyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    expect(calls).toEqual([]);
+  });
+
+  it('runs a validator when an invalid sibling property is not declared as a dependency', async () => {
+    const calls: unknown[] = [];
+
+    class UndeclaredDependencyEntity {
+      @IsString()
+      code: unknown = 42;
+
+      @ValidateWith<UndeclaredDependencyEntity, 'label'>((value) => void calls.push(value))
+      label = 'fine';
+    }
+
+    await expect(validateOrFail({ entity: new UndeclaredDependencyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    expect(calls).toEqual(['fine']);
+  });
+});
+
 describe('validationContext', () => {
   it('is reachable from a decorator running inside a validateOrFail context', async () => {
     const seen: boolean[] = [];
@@ -149,13 +211,13 @@ describe('validationContext', () => {
 
 describe('isNew', () => {
   it('returns true when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isNew({ name: 'test' })).toBe(true);
     });
   });
 
   it('returns false when an original snapshot exists', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'test' }, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'test' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isNew({ name: 'test' })).toBe(false);
     });
   });
@@ -163,19 +225,19 @@ describe('isNew', () => {
 
 describe('isChanged', () => {
   it('treats a defined property as changed when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isChanged({ name: 'test' }, 'name')).toBe(true);
     });
   });
 
   it('treats an undefined property as unchanged when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isChanged({ name: undefined }, 'name')).toBe(false);
     });
   });
 
   it('compares the property against the original snapshot when one exists', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isChanged({ name: 'new' }, 'name')).toBe(true);
       expect(isChanged({ name: 'old' }, 'name')).toBe(false);
     });
@@ -184,19 +246,19 @@ describe('isChanged', () => {
 
 describe('isDirty', () => {
   it('is dirty for a new entity even when the property matches its default', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isDirty({ name: undefined }, 'name')).toBe(true);
     });
   });
 
   it('is dirty when an existing entity changed the property', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isDirty({ name: 'new' }, 'name')).toBe(true);
     });
   });
 
   it('is not dirty when an existing entity did not change the property', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {} }, () => {
+    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
       expect(isDirty({ name: 'old' }, 'name')).toBe(false);
     });
   });

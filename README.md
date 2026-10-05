@@ -213,18 +213,38 @@ allow passing a context, so `validateOrFail` sets up an `AsyncLocalStorage`
 context that gives decorators access to the transactional entity manager,
 which `insertEntity`/`updateEntity`/`upsertEntity` set up automatically.
 
-- **`ValidateWith(validate)`** — property decorator;
+The decorators below query the database, so they must not see values that
+`class-validator` has already rejected — a non-uuid string reaching a `uuid`
+column makes the driver raise instead of the validation failing cleanly.
+`validateOrFail` therefore validates in two passes: the first runs the standard
+`class-validator` decorators, the second runs the ones below, each skipped
+unless every property it depends on survived the first pass. A decorator
+depends on the property it is attached to, plus `IsUnique`'s `scope` columns,
+plus anything named in its `dependencies` option — declare that whenever a
+callback reads other properties off the entity:
+
+```ts
+@Column({ type: 'text' })
+@ValidateWith<BookingEntity, 'endsAt'>((value, booking) =>
+  value < booking.startsAt ? 'must be after the start' : undefined, { dependencies: ['startsAt'] })
+endsAt!: Date;
+```
+
+Without that, `endsAt` would be checked against a `startsAt` that the first
+pass had already rejected.
+
+- **`ValidateWith(validate, { dependencies? })`** — property decorator;
   `validate(value, entity, entityManager)` returns an error string (or a
   `Promise` of one) to fail, `undefined` to pass. The returned string is the
   message, so there is no separate `message` option — to reuse a shared
   predicate with a per-property message, wrap it: `ValidateWith((value) =>
   isReserved(value) ? 'is not allowed' : undefined)`.
-- **`References(() => RelatedEntity, { validate?, validateIf?, message? })`** —
+- **`References(() => RelatedEntity, { validate?, validateIf?, dependencies?, message? })`** —
   fails unless `value` is a valid primary key of `RelatedEntity`; the optional
   `validate(relatedEntity, entity)` callback can reject further (e.g. a status
   check) after the row is found, returning an error string the same way
   `ValidateWith` does.
-- **`IsUnique({ scope?, caseInsensitive?, validateIf?, message? })`** — fails if
+- **`IsUnique({ scope?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
   another row (excluding the entity's own primary key) already has this value,
   optionally scoped to a set of sibling columns. `caseInsensitive` makes the
   comparison ignore case by normalising both sides with SQL `UPPER()`
@@ -237,10 +257,13 @@ which `insertEntity`/`updateEntity`/`upsertEntity` set up automatically.
   `@ValidateIf`) to check the entity against the pre-update snapshot: `isNew` is
   true when there is no snapshot (an insert), `isChanged` compares the property
   to the snapshot, `isDirty` is `isNew(entity) || isChanged(entity, property)`.
-- **`validateOrFail({ entity, entityManager, original })`** — runs every
-  decorator on `entity` and throws `ValidationError` (see [Errors](#errors)) if
-  any fail; `original` is the pre-update snapshot (or `null` for an insert) that
-  `isNew`/`isChanged`/`isDirty` read from.
+- **`validateOrFail({ entity, entityManager, original })`** — runs both passes
+  described above over `entity` and throws `ValidationError` (see
+  [Errors](#errors)) if any decorator fails; `original` is the pre-update
+  snapshot (or `null` for an insert) that `isNew`/`isChanged`/`isDirty` read
+  from. Standard `class-validator` decorators run in both passes, so keep your
+  own custom decorators free of side effects, or give them a `validateIf` that
+  makes the second run cheap.
 
 Please note: typeorm has no real dirty tracking. Therefore, when using
 `insertEntity` everything is assumed to be changed/dirty and `isNew` returns

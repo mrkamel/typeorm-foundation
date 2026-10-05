@@ -7,11 +7,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { MissingValidationContextError, ValidationError } from './errors';
 import { singleton } from './singleton';
 
-type ValidationContext = AsyncLocalStorage<{
+type ValidationStore = {
   entityManager: EntityManager,
   original: ObjectLiteral | null,
   customErrors: Record<string, string>,
-}>;
+  firstPassInvalidProperties: Set<string> | null,
+};
+
+type ValidationContext = AsyncLocalStorage<ValidationStore>;
 
 export const validationContext = singleton<ValidationContext>('validationContext', () => new AsyncLocalStorage());
 
@@ -27,7 +30,15 @@ export async function validateOrFail<T extends object>(
   { entity, entityManager, original }:
   { entity: T, entityManager: EntityManager, original: T | null }
 ): Promise<T> {
-  const errors = await validationContext.run({ entityManager, original, customErrors: {} }, async () => await validate(entity));
+  const context: ValidationStore = { entityManager, original, customErrors: {}, firstPassInvalidProperties: null };
+
+  const errors = await validationContext.run(context, async () => {
+    const firstPassErrors = await validate(entity);
+
+    context.firstPassInvalidProperties = new Set(firstPassErrors.map((error) => error.property));
+
+    return await validate(entity);
+  });
 
   if (errors.length > 0) {
     throw new ValidationError(errors.reduce((acc, cur) => {
@@ -39,6 +50,14 @@ export async function validateOrFail<T extends object>(
   }
 
   return entity;
+}
+
+function hasFailedDependencies(dependencies: string[]) {
+  const { firstPassInvalidProperties } = getValidationContextOrFail();
+
+  if (!firstPassInvalidProperties) return true;
+
+  return dependencies.some((property) => firstPassInvalidProperties.has(property));
 }
 
 type MessageOption = string | ((validationArguments: ValidationArguments | undefined) => string);
@@ -78,9 +97,11 @@ export function isNew<Entity extends ObjectLiteral>(_entity: Entity) {
 
 export function ValidateWith<Entity extends object, Key extends Extract<keyof Entity, string>>(
   validate: (value: Entity[Key], entity: Entity, manager: EntityManager) => Promise<string | undefined> | string | undefined,
+  options?: { dependencies?: Extract<keyof Entity, string>[] },
 ) {
   return function (target: Entity, propertyName: Key) {
     const name = `validateWith:${target.constructor.name}:${randomUUID()}`;
+    const fullDependencies = [propertyName, ...options?.dependencies ?? []];
 
     registerDecorator({
       name,
@@ -88,6 +109,8 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
+          if (hasFailedDependencies(fullDependencies)) return true;
+
           const context = getValidationContextOrFail();
           const entity = validationArguments?.object as Entity;
           const errorMessage = await validate(value, entity, context.entityManager);
@@ -107,10 +130,16 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
 
 export function References<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>, Related = any>(
   relatedEntity: () => Function,
-  options?: { validate?: (related: Related, entity: Entity) => Promise<string | undefined> | string | undefined, validateIf?: (entity: Entity) => boolean, message?: MessageOption },
+  options?: {
+    validate?: (related: Related, entity: Entity) => Promise<string | undefined> | string | undefined,
+    validateIf?: (entity: Entity) => boolean,
+    dependencies?: Extract<keyof Entity, string>[],
+    message?: MessageOption,
+  },
 ) {
   return function (target: Entity, propertyName: Key) {
     const name = `references:${target.constructor.name}:${randomUUID()}`;
+    const fullDependencies = [propertyName, ...options?.dependencies ?? []];
 
     registerDecorator({
       name,
@@ -118,6 +147,8 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
+          if (hasFailedDependencies(fullDependencies)) return true;
+
           const entity = validationArguments?.object as Entity;
 
           if (options?.validateIf && !options.validateIf(entity)) return true;
@@ -152,15 +183,24 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
 }
 
 export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(
-  options?: { scope?: Extract<keyof Entity, string>[], caseInsensitive?: 'upper' | 'lower', validateIf?: (entity: Entity) => boolean, message?: MessageOption },
+  options?: {
+    scope?: Extract<keyof Entity, string>[],
+    caseInsensitive?: 'upper' | 'lower',
+    validateIf?: (entity: Entity) => boolean,
+    dependencies?: Extract<keyof Entity, string>[],
+    message?: MessageOption,
+  },
 ) {
   return function (target: Entity, propertyName: Key) {
+    const fullDependencies = [propertyName, ...options?.scope ?? [], ...options?.dependencies ?? []];
+
     registerDecorator({
       name: `isUnique:${target.constructor.name}:${randomUUID()}`,
       target: target.constructor,
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
+          if (hasFailedDependencies(fullDependencies)) return true;
           if (value === undefined) return false;
 
           const entity = validationArguments?.object as Entity;
