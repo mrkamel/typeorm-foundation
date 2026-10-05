@@ -30,15 +30,15 @@ export async function validateOrFail<T extends object>(
   { entity, entityManager, original }:
   { entity: T, entityManager: EntityManager, original: T | null }
 ): Promise<T> {
-  const context: ValidationStore = { entityManager, original, customErrors: {}, firstPassInvalidProperties: null };
+  const firstPassErrors = await validationContext.run(
+    { entityManager, original, customErrors: {}, firstPassInvalidProperties: null },
+    async () => await validate(entity),
+  );
 
-  const errors = await validationContext.run(context, async () => {
-    const firstPassErrors = await validate(entity);
-
-    context.firstPassInvalidProperties = new Set(firstPassErrors.map((error) => error.property));
-
-    return await validate(entity);
-  });
+  const errors = await validationContext.run(
+    { entityManager, original, customErrors: {}, firstPassInvalidProperties: new Set(firstPassErrors.map((error) => error.property)) },
+    async () => await validate(entity),
+  );
 
   if (errors.length > 0) {
     throw new ValidationError(errors.reduce((acc, cur) => {
