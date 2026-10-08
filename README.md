@@ -252,11 +252,31 @@ teamId!: string | null;
   message, so there is no separate `message` option — to reuse a shared
   predicate with a per-property message, wrap it: `ValidateWith((value) =>
   isReserved(value) ? 'is not allowed' : undefined)`.
-- **`References(() => RelatedEntity, { validate?, validateIf?, dependencies?, message? })`** —
-  fails unless `value` is a valid primary key of `RelatedEntity`; the optional
-  `validate(relatedEntity, entity)` callback can reject further (e.g. a status
-  check) after the row is found, returning an error string the same way
-  `ValidateWith` does.
+- **`References(() => RelatedEntity, { foreignKey?, primaryKey?, validate?, validateIf?, dependencies?, message? })`** —
+  fails unless a `RelatedEntity` row exists whose `primaryKey` columns equal
+  this entity's `foreignKey` columns, or if any `foreignKey` column is
+  `null`/`undefined`. `foreignKey` defaults to the decorated property and
+  `primaryKey` to `RelatedEntity`'s primary columns, in declaration order; both
+  take a single property or an array, paired by position, so a composite key is
+  just two arrays. `primaryKey` can name any column that identifies a row, not
+  only the real primary key. Every `foreignKey` column is a dependency, so an
+  invalid one skips the lookup. Arrays of different lengths throw `ArgumentError`
+  when the class is defined, or on the first validation if the length mismatch
+  is with the default `primaryKey`. Only the `primaryKey` columns are selected
+  unless the optional `validate(relatedEntity, entity)` callback is given, which
+  receives the full row and can reject further (e.g. a status check), returning
+  an error string the same way `ValidateWith` does.
+
+  ```ts
+  @References<UserEntity, 'teamCode', TeamEntity>(() => TeamEntity, { primaryKey: 'code' })
+  teamCode!: string;
+
+  @References<AssignmentEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, {
+    foreignKey: ['organizationId', 'membershipId'],
+    primaryKey: ['organizationId', 'id'],
+  })
+  membershipId!: string;
+  ```
 - **`IsUnique({ scope?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
   another row (excluding the entity's own primary key) already has this value,
   optionally scoped to a set of sibling columns. `caseInsensitive` makes the
@@ -280,8 +300,10 @@ teamId!: string | null;
 
 Please note: typeorm has no real dirty tracking. Therefore, when using
 `insertEntity` everything is assumed to be changed/dirty and `isNew` returns
-true. When using `updateEntity`, the properties passed are assumed to be
-changed/dirty.
+true. When using `updateEntity`, `isChanged`/`isDirty` compare each property to
+the pre-update snapshot by reference (`!==`), so an object or array passed as a new
+instance counts as changed even when its contents are equal, while one mutated in
+place and passed back as the same instance does not.
 
 ## Testing
 

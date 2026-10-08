@@ -2,8 +2,10 @@ import 'reflect-metadata';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { UserEntity } from './entities/UserEntity';
 import { TeamEntity } from './entities/TeamEntity';
+import { MembershipEntity } from './entities/MembershipEntity';
+import { AssignmentEntity } from './entities/AssignmentEntity';
 
-const entities = [UserEntity, TeamEntity];
+const entities = [UserEntity, TeamEntity, MembershipEntity, AssignmentEntity];
 
 export const database = process.env.DATABASE ?? 'postgres';
 

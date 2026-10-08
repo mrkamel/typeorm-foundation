@@ -41,10 +41,10 @@ describe('insertEntity', () => {
   });
 
   it('rejects a duplicate email', async () => {
-    await UserRepository.insertEntity(new UserEntity({ email: 'dup@example.com', age: null, teamId: null }));
+    await UserRepository.insertEntity(new UserEntity({ email: 'duplicate@example.com', age: null, teamId: null }));
 
     await expect(
-      UserRepository.insertEntity(new UserEntity({ email: 'dup@example.com', age: null, teamId: null }))
+      UserRepository.insertEntity(new UserEntity({ email: 'duplicate@example.com', age: null, teamId: null }))
     ).rejects.toThrow(ValidationError);
   });
 
@@ -62,7 +62,7 @@ describe('insertEntity', () => {
   });
 
   it('accepts a teamId that exists and is not archived', async () => {
-    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Engineering', code: 'eng-1', archived: false }));
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Engineering', code: 'engineering-1', archived: false }));
     const user = new UserEntity({ email: 'hasteam@example.com', age: null, teamId: team.id });
 
     await UserRepository.insertEntity(user);
@@ -220,7 +220,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   });
 
   it('uses the @Column({ name }) database name in the conflict clause and RETURNING * hydration', async () => {
-    const user = new UserEntity({ email: 'dbname@example.com', age: null, teamId: null, displayName: 'Ada' });
+    const user = new UserEntity({ email: 'database-name@example.com', age: null, teamId: null, displayName: 'Ada' });
 
     await UserRepository.upsertEntity(user, { updates: ['displayName'] as any, key: ['id'] });
 
