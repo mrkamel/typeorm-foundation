@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { IsNull, Raw } from 'typeorm';
 import type { EntityManager, ObjectLiteral } from 'typeorm';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { MissingValidationContextError, ValidationError } from './errors';
+import { ArgumentError, MissingValidationContextError, ValidationError } from './errors';
 import { singleton } from './singleton';
 
 type ValidationStore = {
@@ -135,11 +135,23 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
     validateIf?: (entity: Entity) => boolean,
     dependencies?: Extract<keyof Entity, string>[],
     message?: MessageOption,
+    foreignKey?: Extract<keyof Entity, string> | Extract<keyof Entity, string>[],
+    primaryKey?: Extract<keyof Related, string> | Extract<keyof Related, string>[],
   },
 ) {
   return function (target: Entity, propertyName: Key) {
     const name = `references:${target.constructor.name}:${randomUUID()}`;
-    const fullDependencies = [propertyName, ...options?.dependencies ?? []];
+    const foreignKeys = options?.foreignKey === undefined ? [propertyName] : [options.foreignKey].flat();
+    const explicitPrimaryKeys = options?.primaryKey === undefined ? null : [options.primaryKey].flat() as string[];
+    const fullDependencies = [...new Set([propertyName, ...foreignKeys, ...options?.dependencies ?? []])];
+
+    if (!foreignKeys.includes(propertyName)) {
+      throw new ArgumentError(`${target.constructor.name}.${propertyName}: foreignKey must include the decorated property`);
+    }
+
+    if (explicitPrimaryKeys && explicitPrimaryKeys.length !== foreignKeys.length) {
+      throw new ArgumentError(`${target.constructor.name}.${propertyName}: foreignKey and primaryKey must have the same number of columns`);
+    }
 
     registerDecorator({
       name,
@@ -147,20 +159,30 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
+          const context = getValidationContextOrFail();
+
+          const primaryKeys = explicitPrimaryKeys ?? context.entityManager.dataSource.getMetadata(relatedEntity()).primaryColumns.map(column => column.propertyName);
+
+          if (primaryKeys.length === 0) {
+            throw new ArgumentError(`${target.constructor.name}.${propertyName}: ${relatedEntity().name} has no primary key, pass primaryKey explicitly`);
+          }
+
+          if (primaryKeys.length !== foreignKeys.length) {
+            throw new ArgumentError(`${target.constructor.name}.${propertyName}: references ${primaryKeys.length} primary key column(s) of ${relatedEntity().name} with ${foreignKeys.length} foreign key column(s)`);
+          }
+
           if (hasFailedDependencies(fullDependencies)) return true;
 
           const entity = validationArguments?.object as Entity;
 
           if (options?.validateIf && !options.validateIf(entity)) return true;
-          if (value == null) return false;
 
-          const context = getValidationContextOrFail();
-
-          const [primaryColumn] = context.entityManager.dataSource.getMetadata(relatedEntity()).primaryColumns;
-          if (!primaryColumn) return false;
+          const foreignKeyValues = foreignKeys.map(key => entity[key]);
+          if (foreignKeyValues.some(foreignKeyValue => foreignKeyValue == null)) return false;
 
           const existing = await context.entityManager.getRepository(relatedEntity()).findOne({
-            where: { [primaryColumn.propertyName]: value },
+            ...(options?.validate ? {} : { select: Object.fromEntries(primaryKeys.map(key => [key, true])) }),
+            where: Object.fromEntries(primaryKeys.map((key, index) => [key, foreignKeyValues[index]])),
           });
 
           if (!existing) return false;
@@ -214,10 +236,14 @@ export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof
           if (scopeEntries.some(([, scopeValue]) => scopeValue === undefined)) return false;
 
           const scope = Object.fromEntries(scopeEntries.map(([key, scopeValue]) => [key, scopeValue === null ? IsNull() : scopeValue]));
-
-          const existing = await repository.find({ where: { [propertyName]: matchValue(value, options?.caseInsensitive), ...scope }, take: 2 });
-
           const primaryColumns = context.entityManager.dataSource.getMetadata(entity.constructor).primaryColumns.map(column => column.propertyName);
+
+          const existing = await repository.find({
+            select: Object.fromEntries(primaryColumns.map(key => [key, true])),
+            where: { [propertyName]: matchValue(value, options?.caseInsensitive), ...scope },
+            take: 2,
+          });
+
           const hasPrimaryKeyValue = primaryColumns.length > 0 && primaryColumns.every(key => (entity as any)[key] != null);
 
           return !existing.some(row => !hasPrimaryKeyValue || !primaryColumns.every(key => (row as any)[key] === (entity as any)[key]));

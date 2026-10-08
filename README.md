@@ -252,11 +252,36 @@ teamId!: string | null;
   message, so there is no separate `message` option — to reuse a shared
   predicate with a per-property message, wrap it: `ValidateWith((value) =>
   isReserved(value) ? 'is not allowed' : undefined)`.
-- **`References(() => RelatedEntity, { validate?, validateIf?, dependencies?, message? })`** —
-  fails unless `value` is a valid primary key of `RelatedEntity`; the optional
-  `validate(relatedEntity, entity)` callback can reject further (e.g. a status
-  check) after the row is found, returning an error string the same way
-  `ValidateWith` does.
+- **`References(() => RelatedEntity, { foreignKey?, primaryKey?, validate?, validateIf?, dependencies?, message? })`** —
+  fails unless a `RelatedEntity` row exists whose `primaryKey` columns equal
+  this entity's `foreignKey` columns, or if any `foreignKey` column is
+  `null`/`undefined`. `foreignKey` defaults to the decorated property and
+  `primaryKey` to `RelatedEntity`'s primary columns, in declaration order; both
+  take a single property or an array, paired by position, so a composite key is
+  just two arrays. `primaryKey` can name other columns than the real primary
+  key, but they must be unique together: nothing checks that, and on duplicates
+  the lookup picks an arbitrary row, so `validate` may see the wrong one.
+  `foreignKey` must include the decorated property, and every `foreignKey`
+  column is a dependency, so an invalid one skips the lookup. A misconfigured
+  decorator throws `ArgumentError`: arrays of different lengths or a
+  `foreignKey` without the decorated property when the class is defined, a
+  length mismatch with the default `primaryKey` or a related entity without
+  primary key on the first validation, even if `validateIf` or a `null` value
+  would skip the lookup. Only the `primaryKey` columns are selected
+  unless the optional `validate(relatedEntity, entity)` callback is given, which
+  receives the full row and can reject further (e.g. a status check), returning
+  an error string the same way `ValidateWith` does.
+
+  ```ts
+  @References<PaymentEntity, 'currencyCode', CurrencyEntity>(() => CurrencyEntity, { primaryKey: 'code' })
+  currencyCode!: string;
+
+  @References<AssignmentEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, {
+    foreignKey: ['organizationId', 'membershipId'],
+    primaryKey: ['organizationId', 'id'],
+  })
+  membershipId!: string;
+  ```
 - **`IsUnique({ scope?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
   another row (excluding the entity's own primary key) already has this value,
   optionally scoped to a set of sibling columns. `caseInsensitive` makes the
@@ -280,8 +305,10 @@ teamId!: string | null;
 
 Please note: typeorm has no real dirty tracking. Therefore, when using
 `insertEntity` everything is assumed to be changed/dirty and `isNew` returns
-true. When using `updateEntity`, the properties passed are assumed to be
-changed/dirty.
+true. When using `updateEntity`, `isChanged`/`isDirty` compare each property to
+the pre-update snapshot by reference (`!==`), so an object or array passed as a new
+instance counts as changed even when its contents are equal, while one mutated in
+place and passed back as the same instance does not.
 
 ## Testing
 

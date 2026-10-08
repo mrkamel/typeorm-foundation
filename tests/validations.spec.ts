@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { IsString } from 'class-validator';
-import { ValidationError } from '../src';
-import { isChanged, isDirty, isNew, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import { ArgumentError, ValidationError } from '../src';
+import { isChanged, isDirty, isNew, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import { dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
+import { MembershipRepository } from './repositories/MembershipRepository';
+import { AssignmentRepository } from './repositories/AssignmentRepository';
 import { UserEntity } from './entities/UserEntity';
 import { TeamEntity } from './entities/TeamEntity';
+import { MembershipEntity } from './entities/MembershipEntity';
+import { AssignmentEntity } from './entities/AssignmentEntity';
 
 describe('ValidationError', () => {
   it('collects one message per invalid property', async () => {
@@ -30,14 +35,14 @@ describe('ValidationError', () => {
 
 describe('ValidateWith', () => {
   it('fails with the message returned by the validator', async () => {
-    const user = new UserEntity({ email: 'msg@example.com', age: null, teamId: null, displayName: 'reserved' });
+    const user = new UserEntity({ email: 'message@example.com', age: null, teamId: null, displayName: 'reserved' });
 
     await expect(UserRepository.insertEntity(user)).rejects.toThrow('displayName: is not allowed');
   });
 
 
   it('passes when the validator returns no message', async () => {
-    const user = new UserEntity({ email: 'msg2@example.com', age: null, teamId: null, displayName: 'Ada' });
+    const user = new UserEntity({ email: 'message2@example.com', age: null, teamId: null, displayName: 'Ada' });
 
     await expect(UserRepository.insertEntity(user)).resolves.toBeDefined();
   });
@@ -68,6 +73,115 @@ describe('References', () => {
     const user = new UserEntity({ email: 'novalidate@example.com', age: null, teamId: null });
 
     await expect(UserRepository.insertEntity(user)).resolves.toBeDefined();
+  });
+
+  it('passes the full related row to the validate callback', async () => {
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Research', code: 'research', slug: 'research-team', archived: false }));
+    const relatedRows: TeamEntity[] = [];
+
+    class FullRowEntity {
+      @References<FullRowEntity, 'teamId', TeamEntity>(() => TeamEntity, { validate: (related) => void relatedRows.push(related) })
+      teamId = team.id;
+    }
+
+    await validateOrFail({ entity: new FullRowEntity(), entityManager: dataSource.manager, original: null });
+
+    expect(relatedRows).toEqual([{ id: team.id, name: 'Research', code: 'research', slug: 'research-team', archived: false }]);
+  });
+
+  it('looks the reference up by a custom primaryKey', async () => {
+    await TeamRepository.insertEntity(new TeamEntity({ name: 'Platform', code: 'platform', archived: false }));
+    await MembershipRepository.insertEntity(new MembershipEntity({ organizationId: 'organization-1', id: 'membership-1' }));
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1', teamCode: 'platform' }))
+    ).resolves.toBeDefined();
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1', teamCode: 'missing' }))
+    ).rejects.toThrow('teamCode: reference is invalid');
+  });
+
+  it('matches every column of a composite key', async () => {
+    await MembershipRepository.insertEntity(new MembershipEntity({ organizationId: 'organization-1', id: 'membership-1' }));
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1' }))
+    ).resolves.toBeDefined();
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-2', membershipId: 'membership-1' }))
+    ).rejects.toThrow('membershipId: reference is invalid');
+  });
+
+  it('fails when part of a composite foreign key is missing', async () => {
+    await MembershipRepository.insertEntity(new MembershipEntity({ organizationId: 'organization-1', id: 'membership-1' }));
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: null }))
+    ).rejects.toThrow('membershipId: reference is invalid');
+  });
+
+  it('skips the lookup when a foreign key column is invalid', async () => {
+    const error = await AssignmentRepository
+      .insertEntity(new AssignmentEntity({ organizationId: 42 as unknown as string, membershipId: 'membership-1' }))
+      .catch((error: unknown) => error) as ValidationError;
+
+    expect(Object.keys(error.errors)).toEqual(['organizationId']);
+  });
+
+  it('rejects mismatched foreignKey and primaryKey columns at declaration', () => {
+    expect(() => {
+      class MismatchedEntity {
+        @References<MismatchedEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, { foreignKey: ['organizationId', 'membershipId'], primaryKey: 'id' })
+        membershipId = 'membership-1';
+
+        organizationId = 'organization-1';
+      }
+
+      return MismatchedEntity;
+    }).toThrow(new ArgumentError('MismatchedEntity.membershipId: foreignKey and primaryKey must have the same number of columns'));
+  });
+
+  it('rejects a single foreign key against a composite primary key', async () => {
+    class SingleKeyEntity {
+      @References<SingleKeyEntity, 'membershipId', MembershipEntity>(() => MembershipEntity)
+      membershipId = 'membership-1';
+    }
+
+    await expect(
+      validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, original: null })
+    ).rejects.toThrow(new ArgumentError(
+      'SingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
+    ));
+  });
+
+  it('rejects a misconfigured decorator even when the lookup would be skipped', async () => {
+    class SkippedSingleKeyEntity {
+      @References<SkippedSingleKeyEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, { validateIf: (entity) => entity.membershipId != null })
+      membershipId: string | null = null;
+    }
+
+    await expect(
+      validateOrFail({ entity: new SkippedSingleKeyEntity(), entityManager: dataSource.manager, original: null })
+    ).rejects.toThrow(new ArgumentError(
+      'SkippedSingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
+    ));
+  });
+
+  it('rejects a foreignKey without the decorated property at declaration', () => {
+    expect(() => {
+      class ForeignKeyWithoutPropertyEntity {
+        @References<ForeignKeyWithoutPropertyEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, { foreignKey: ['organizationId', 'otherMembershipId'] })
+        membershipId = 'membership-1';
+
+        organizationId = 'organization-1';
+
+        otherMembershipId = 'membership-1';
+      }
+
+      return ForeignKeyWithoutPropertyEntity;
+    }).toThrow(new ArgumentError('ForeignKeyWithoutPropertyEntity.membershipId: foreignKey must include the decorated property'));
   });
 });
 
@@ -118,9 +232,9 @@ describe('IsUnique', () => {
   });
 
   it('ignores case differences against the entity itself when caseInsensitive is set', async () => {
-    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Ops', code: 'ops', slug: 'ops-team', archived: false }));
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Operations', code: 'operations', slug: 'operations-team', archived: false }));
 
-    await expect(TeamRepository.updateEntity(team, { slug: 'OPS-TEAM' })).resolves.toMatchObject({ slug: 'OPS-TEAM' });
+    await expect(TeamRepository.updateEntity(team, { slug: 'OPERATIONS-TEAM' })).resolves.toMatchObject({ slug: 'OPERATIONS-TEAM' });
   });
 
   it('skips re-validation when the scoped field is untouched by the update', async () => {
