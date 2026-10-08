@@ -41,11 +41,11 @@ export async function validateOrFail<T extends object>(
   );
 
   if (errors.length > 0) {
-    throw new ValidationError(errors.reduce((messagesByProperty, error) => {
-      if (error.constraints) messagesByProperty[error.property] = Object.values(error.constraints)
-        .map((value) => value.startsWith(`${error.property} `) ? value.slice(error.property.length + 1) : value);
+    throw new ValidationError(errors.reduce((acc, cur) => {
+      if (cur.constraints) acc[cur.property] = Object.values(cur.constraints)
+        .map((value) => value.startsWith(`${cur.property} `) ? value.slice(cur.property.length + 1) : value);
 
-      return messagesByProperty;
+      return acc;
     }, {} as Record<string, string[]>));
   }
 
@@ -143,7 +143,11 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
     const name = `references:${target.constructor.name}:${randomUUID()}`;
     const foreignKeys = options?.foreignKey === undefined ? [propertyName] : [options.foreignKey].flat();
     const explicitPrimaryKeys = options?.primaryKey === undefined ? null : [options.primaryKey].flat() as string[];
-    const fullDependencies = [propertyName, ...foreignKeys, ...options?.dependencies ?? []];
+    const fullDependencies = [...new Set([propertyName, ...foreignKeys, ...options?.dependencies ?? []])];
+
+    if (!foreignKeys.includes(propertyName)) {
+      throw new ArgumentError(`${target.constructor.name}.${propertyName}: foreignKey must include the decorated property`);
+    }
 
     if (explicitPrimaryKeys && explicitPrimaryKeys.length !== foreignKeys.length) {
       throw new ArgumentError(`${target.constructor.name}.${propertyName}: foreignKey and primaryKey must have the same number of columns`);
@@ -155,15 +159,6 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
-          if (hasFailedDependencies(fullDependencies)) return true;
-
-          const entity = validationArguments?.object as Entity;
-
-          if (options?.validateIf && !options.validateIf(entity)) return true;
-
-          const foreignKeyValues = foreignKeys.map(key => entity[key]);
-          if (foreignKeyValues.some(foreignKeyValue => foreignKeyValue == null)) return false;
-
           const context = getValidationContextOrFail();
 
           const primaryKeys = explicitPrimaryKeys ?? context.entityManager.dataSource.getMetadata(relatedEntity()).primaryColumns.map(column => column.propertyName);
@@ -175,6 +170,15 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
           if (primaryKeys.length !== foreignKeys.length) {
             throw new ArgumentError(`${target.constructor.name}.${propertyName}: references ${primaryKeys.length} primary key column(s) of ${relatedEntity().name} with ${foreignKeys.length} foreign key column(s)`);
           }
+
+          if (hasFailedDependencies(fullDependencies)) return true;
+
+          const entity = validationArguments?.object as Entity;
+
+          if (options?.validateIf && !options.validateIf(entity)) return true;
+
+          const foreignKeyValues = foreignKeys.map(key => entity[key]);
+          if (foreignKeyValues.some(foreignKeyValue => foreignKeyValue == null)) return false;
 
           const existing = await context.entityManager.getRepository(relatedEntity()).findOne({
             ...(options?.validate ? {} : { select: Object.fromEntries(primaryKeys.map(key => [key, true])) }),

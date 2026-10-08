@@ -258,18 +258,23 @@ teamId!: string | null;
   `null`/`undefined`. `foreignKey` defaults to the decorated property and
   `primaryKey` to `RelatedEntity`'s primary columns, in declaration order; both
   take a single property or an array, paired by position, so a composite key is
-  just two arrays. `primaryKey` can name any column that identifies a row, not
-  only the real primary key. Every `foreignKey` column is a dependency, so an
-  invalid one skips the lookup. Arrays of different lengths throw `ArgumentError`
-  when the class is defined, or on the first validation if the length mismatch
-  is with the default `primaryKey`. Only the `primaryKey` columns are selected
+  just two arrays. `primaryKey` can name other columns than the real primary
+  key, but they must be unique together: nothing checks that, and on duplicates
+  the lookup picks an arbitrary row, so `validate` may see the wrong one.
+  `foreignKey` must include the decorated property, and every `foreignKey`
+  column is a dependency, so an invalid one skips the lookup. A misconfigured
+  decorator throws `ArgumentError`: arrays of different lengths or a
+  `foreignKey` without the decorated property when the class is defined, a
+  length mismatch with the default `primaryKey` or a related entity without
+  primary key on the first validation, even if `validateIf` or a `null` value
+  would skip the lookup. Only the `primaryKey` columns are selected
   unless the optional `validate(relatedEntity, entity)` callback is given, which
   receives the full row and can reject further (e.g. a status check), returning
   an error string the same way `ValidateWith` does.
 
   ```ts
-  @References<UserEntity, 'teamCode', TeamEntity>(() => TeamEntity, { primaryKey: 'code' })
-  teamCode!: string;
+  @References<PaymentEntity, 'currencyCode', CurrencyEntity>(() => CurrencyEntity, { primaryKey: 'code' })
+  currencyCode!: string;
 
   @References<AssignmentEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, {
     foreignKey: ['organizationId', 'membershipId'],

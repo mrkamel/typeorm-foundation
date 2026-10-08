@@ -75,29 +75,57 @@ describe('References', () => {
     await expect(UserRepository.insertEntity(user)).resolves.toBeDefined();
   });
 
+  it('passes the full related row to the validate callback', async () => {
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Research', code: 'research', slug: 'research-team', archived: false }));
+    const relatedRows: TeamEntity[] = [];
+
+    class FullRowEntity {
+      @References<FullRowEntity, 'teamId', TeamEntity>(() => TeamEntity, { validate: (related) => void relatedRows.push(related) })
+      teamId = team.id;
+    }
+
+    await validateOrFail({ entity: new FullRowEntity(), entityManager: dataSource.manager, original: null });
+
+    expect(relatedRows).toEqual([{ id: team.id, name: 'Research', code: 'research', slug: 'research-team', archived: false }]);
+  });
+
   it('looks the reference up by a custom primaryKey', async () => {
     await TeamRepository.insertEntity(new TeamEntity({ name: 'Platform', code: 'platform', archived: false }));
     await MembershipRepository.insertEntity(new MembershipEntity({ organizationId: 'organization-1', id: 'membership-1' }));
 
-    await expect(AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1', teamCode: 'platform' }))).resolves.toBeDefined();
-    await expect(AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1', teamCode: 'missing' }))).rejects.toThrow('teamCode: reference is invalid');
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1', teamCode: 'platform' }))
+    ).resolves.toBeDefined();
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1', teamCode: 'missing' }))
+    ).rejects.toThrow('teamCode: reference is invalid');
   });
 
   it('matches every column of a composite key', async () => {
     await MembershipRepository.insertEntity(new MembershipEntity({ organizationId: 'organization-1', id: 'membership-1' }));
 
-    await expect(AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1' }))).resolves.toBeDefined();
-    await expect(AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-2', membershipId: 'membership-1' }))).rejects.toThrow('membershipId: reference is invalid');
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: 'membership-1' }))
+    ).resolves.toBeDefined();
+
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-2', membershipId: 'membership-1' }))
+    ).rejects.toThrow('membershipId: reference is invalid');
   });
 
   it('fails when part of a composite foreign key is missing', async () => {
     await MembershipRepository.insertEntity(new MembershipEntity({ organizationId: 'organization-1', id: 'membership-1' }));
 
-    await expect(AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: null }))).rejects.toThrow('membershipId: reference is invalid');
+    await expect(
+      AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 'organization-1', membershipId: null }))
+    ).rejects.toThrow('membershipId: reference is invalid');
   });
 
   it('skips the lookup when a foreign key column is invalid', async () => {
-    const error = await AssignmentRepository.insertEntity(new AssignmentEntity({ organizationId: 42 as unknown as string, membershipId: 'membership-1' })).catch((error: unknown) => error) as ValidationError;
+    const error = await AssignmentRepository
+      .insertEntity(new AssignmentEntity({ organizationId: 42 as unknown as string, membershipId: 'membership-1' }))
+      .catch((error: unknown) => error) as ValidationError;
 
     expect(Object.keys(error.errors)).toEqual(['organizationId']);
   });
@@ -112,7 +140,7 @@ describe('References', () => {
       }
 
       return MismatchedEntity;
-    }).toThrow(ArgumentError);
+    }).toThrow(new ArgumentError('MismatchedEntity.membershipId: foreignKey and primaryKey must have the same number of columns'));
   });
 
   it('rejects a single foreign key against a composite primary key', async () => {
@@ -121,8 +149,41 @@ describe('References', () => {
       membershipId = 'membership-1';
     }
 
-    await expect(validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, original: null })).rejects.toThrow(ArgumentError);
-  });});
+    await expect(
+      validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, original: null })
+    ).rejects.toThrow(new ArgumentError(
+      'SingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
+    ));
+  });
+
+  it('rejects a misconfigured decorator even when the lookup would be skipped', async () => {
+    class SkippedSingleKeyEntity {
+      @References<SkippedSingleKeyEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, { validateIf: (entity) => entity.membershipId != null })
+      membershipId: string | null = null;
+    }
+
+    await expect(
+      validateOrFail({ entity: new SkippedSingleKeyEntity(), entityManager: dataSource.manager, original: null })
+    ).rejects.toThrow(new ArgumentError(
+      'SkippedSingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
+    ));
+  });
+
+  it('rejects a foreignKey without the decorated property at declaration', () => {
+    expect(() => {
+      class ForeignKeyWithoutPropertyEntity {
+        @References<ForeignKeyWithoutPropertyEntity, 'membershipId', MembershipEntity>(() => MembershipEntity, { foreignKey: ['organizationId', 'otherMembershipId'] })
+        membershipId = 'membership-1';
+
+        organizationId = 'organization-1';
+
+        otherMembershipId = 'membership-1';
+      }
+
+      return ForeignKeyWithoutPropertyEntity;
+    }).toThrow(new ArgumentError('ForeignKeyWithoutPropertyEntity.membershipId: foreignKey must include the decorated property'));
+  });
+});
 
 describe('IsUnique', () => {
   it('allows saving an entity when the unique field is untouched', async () => {
