@@ -101,11 +101,16 @@ Each repository built from it is a TypeORM `Repository<Entity>` extended with:
   columns that actually changed. No-ops (skipping validation and listeners) when
   `updates` is empty. Automatically bumps any `isUpdateDate` column not
   explicitly included in `updates`.
-- **`upsertEntity(entity, { updates, key? })`** — validates, then runs `INSERT
-  ... ON CONFLICT (key) DO UPDATE ... RETURNING *`, hydrating the returned row
-  (including any column transformers) back onto `entity`. `updates` is either a
-  list of property names to write or an object of values to merge onto the entity
-  first. Needs a `RETURNING`-capable driver (only tested against Postgres here).
+- **`upsertEntity(entity, { updates, key?, indexPredicate? })`** — validates,
+  then runs `INSERT ... ON CONFLICT (key) DO UPDATE ... RETURNING *`, hydrating
+  the returned row (including any column transformers) back onto `entity`.
+  `updates` is either a list of property names to write or an object of values
+  to merge onto the entity first. Needs a driver that supports `INSERT ...
+  RETURNING` (`driver.isReturningSqlSupported('insert')`); otherwise TypeORM
+  throws `ReturningStatementNotSupportedError`. When `key` targets a partial
+  unique index, pass its condition as `indexPredicate` (e.g.
+  `'"is_active" = true'`); Postgres only, since Postgres can only infer a partial
+  index from `ON CONFLICT (key) WHERE (predicate)`.
 - **`upsertOrFailBy(findCondition, updates)`** — `updateEntity` if a row
   matching `findCondition` exists, otherwise `insertEntity`.
 - **`removeEntity(entity)`** — removes a clone of `entity` so the original

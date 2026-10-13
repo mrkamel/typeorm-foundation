@@ -6,13 +6,17 @@ export type AtLeastOne<T, Keys extends keyof T = keyof T> = {
   [K in Keys]: Required<Pick<T, K>> & Partial<Omit<T, K>>;
 }[Keys];
 
+export type UpsertEntityOptions<Entity extends ObjectLiteral> = {
+  updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>,
+} & ({ key?: (keyof Entity)[], indexPredicate?: never } | { key: (keyof Entity)[], indexPredicate?: string });
+
 export type FoundationRepository<Entity extends ObjectLiteral> = Repository<Entity> & {
   override<Self, C extends object>(this: Self, custom: C & ThisType<Omit<Self, keyof C> & C>): Omit<Self, keyof C> & C;
   removeEntity(entity: Entity): Promise<Entity>;
   upsertOrFailBy(findCondition: FindOptionsWhere<Entity>, updates: Partial<Entity>): Promise<Entity>;
   insertEntity(entity: Entity): Promise<Entity>;
   updateEntity(entity: Entity, updates: Partial<Entity>): Promise<Entity>;
-  upsertEntity(entity: Entity, options: { updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>, key?: (keyof Entity)[] }): Promise<Entity>;
+  upsertEntity(entity: Entity, options: UpsertEntityOptions<Entity>): Promise<Entity>;
   validateEntityOrFail(entity: Entity, fields: (keyof Entity)[] | null): Promise<void>;
   reload(entity: Entity): Promise<Entity>;
 };
@@ -74,7 +78,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         return entity;
       },
-      async upsertEntity(entity: Entity, { updates, key }: { updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>, key?: (keyof Entity)[] }) {
+      async upsertEntity(entity: Entity, { updates, key, indexPredicate }: UpsertEntityOptions<Entity>) {
         const isUpdateValues = !Array.isArray(updates);
 
         const updateProperties = isUpdateValues ? Object.keys(updates) as (keyof Entity)[] : updates;
@@ -95,7 +99,8 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
           .values(entity)
           .orUpdate(
             this._propertyToColumnNames([...updateProperties, ...autoUpdatePropertyNames]),
-            key && this._propertyToColumnNames(key)
+            key && this._propertyToColumnNames(key),
+            { indexPredicate }
           )
           .returning('*')
           .execute();
