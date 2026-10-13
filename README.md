@@ -109,7 +109,7 @@ Each repository built from it is a TypeORM `Repository<Entity>` extended with:
   RETURNING` (`driver.isReturningSqlSupported('insert')`); otherwise TypeORM
   throws `ReturningStatementNotSupportedError`. When `key` targets a partial
   unique index, pass its condition as `indexPredicate` (e.g.
-  `'"active" = true'`); Postgres only, since Postgres can only infer a partial
+  `'"is_active" = true'`); Postgres only, since Postgres can only infer a partial
   index from `ON CONFLICT (key) WHERE (predicate)`.
 - **`upsertOrFailBy(findCondition, updates)`** — `updateEntity` if a row
   matching `findCondition` exists, otherwise `insertEntity`.

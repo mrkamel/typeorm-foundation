@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NotFoundError, FoundationError, ValidationError, createRepositoryFactory } from '../src';
+import type { UpsertEntityOptions } from '../src';
 import { database, dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
@@ -253,6 +254,13 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
     expect(result.id).toBe(reservation.id);
     expect(result.quantity).toBe(2);
     await expect(ReservationRepository.countAll()).resolves.toBe(1);
+  });
+
+  it('only accepts indexPredicate together with key', () => {
+    // @ts-expect-error indexPredicate requires key
+    const options: UpsertEntityOptions<ReservationEntity> = { updates: ['quantity'], indexPredicate: '"active" = true' };
+
+    expect(options.key).toBeUndefined();
   });
 
   it('inserts a new row when the only matching row is outside the partial unique index', async () => {
