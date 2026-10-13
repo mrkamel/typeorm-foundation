@@ -3,9 +3,11 @@ import { NotFoundError, FoundationError, ValidationError, createRepositoryFactor
 import { database, dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
+import { ReservationRepository } from './repositories/ReservationRepository';
 import { createFoundationRepository } from './repositories/createFoundationRepository';
 import { UserEntity } from './entities/UserEntity';
 import { TeamEntity } from './entities/TeamEntity';
+import { ReservationEntity } from './entities/ReservationEntity';
 
 describe('FoundationError', () => {
   it('is the base class every library error extends', () => {
@@ -238,6 +240,31 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
 
     expect(result.score).toBe(42);
     expect(typeof result.score).toBe('number');
+  });
+
+  it('updates the row matching a partial unique index when given its indexPredicate', async () => {
+    const reservation = await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+    const result = await ReservationRepository.upsertEntity(
+      new ReservationEntity({ resource: 'room', active: true, quantity: 2 }),
+      { updates: ['quantity'], key: ['resource'], indexPredicate: '"active" = true' }
+    );
+
+    expect(result.id).toBe(reservation.id);
+    expect(result.quantity).toBe(2);
+    await expect(ReservationRepository.countAll()).resolves.toBe(1);
+  });
+
+  it('inserts a new row when the only matching row is outside the partial unique index', async () => {
+    const reservation = await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }));
+
+    const result = await ReservationRepository.upsertEntity(
+      new ReservationEntity({ resource: 'room', active: true, quantity: 2 }),
+      { updates: ['quantity'], key: ['resource'], indexPredicate: '"active" = true' }
+    );
+
+    expect(result.id).not.toBe(reservation.id);
+    await expect(ReservationRepository.countAll()).resolves.toBe(2);
   });
 });
 

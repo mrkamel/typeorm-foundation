@@ -12,7 +12,7 @@ export type FoundationRepository<Entity extends ObjectLiteral> = Repository<Enti
   upsertOrFailBy(findCondition: FindOptionsWhere<Entity>, updates: Partial<Entity>): Promise<Entity>;
   insertEntity(entity: Entity): Promise<Entity>;
   updateEntity(entity: Entity, updates: Partial<Entity>): Promise<Entity>;
-  upsertEntity(entity: Entity, options: { updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>, key?: (keyof Entity)[] }): Promise<Entity>;
+  upsertEntity(entity: Entity, options: { updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>, key?: (keyof Entity)[], indexPredicate?: string }): Promise<Entity>;
   validateEntityOrFail(entity: Entity, fields: (keyof Entity)[] | null): Promise<void>;
   reload(entity: Entity): Promise<Entity>;
 };
@@ -74,7 +74,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         return entity;
       },
-      async upsertEntity(entity: Entity, { updates, key }: { updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>, key?: (keyof Entity)[] }) {
+      async upsertEntity(entity: Entity, { updates, key, indexPredicate }: { updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>, key?: (keyof Entity)[], indexPredicate?: string }) {
         const isUpdateValues = !Array.isArray(updates);
 
         const updateProperties = isUpdateValues ? Object.keys(updates) as (keyof Entity)[] : updates;
@@ -95,7 +95,8 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
           .values(entity)
           .orUpdate(
             this._propertyToColumnNames([...updateProperties, ...autoUpdatePropertyNames]),
-            key && this._propertyToColumnNames(key)
+            key && this._propertyToColumnNames(key),
+            { indexPredicate }
           )
           .returning('*')
           .execute();
