@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { IsString } from 'class-validator';
 import { ArgumentError, ValidationError } from '../src';
-import { References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import { IsUnique, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
 import type { ValidationOperation } from '../src/validations';
-import { dataSource } from './dataSource';
+import { database, dataSource } from './dataSource';
+import { ReservationRepository } from './repositories/ReservationRepository';
+import { ReservationEntity } from './entities/ReservationEntity';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 import { MembershipRepository } from './repositories/MembershipRepository';
@@ -244,6 +246,74 @@ describe('IsUnique', () => {
 
     await expect(TeamRepository.updateEntity(team, { name: 'Renamed' })).resolves.toBeDefined();
   });
+
+  it('scopes uniqueness to the other columns of its keyName', async () => {
+    await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }));
+
+    await expect(ReservationRepository.insertEntity(new ReservationEntity({ resource: 'hall', active: false, quantity: 1 }))).resolves.toBeDefined();
+
+    await expect(
+      ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }))
+    ).rejects.toThrow(new ValidationError({ quantity: ['is already taken'] }));
+  });
+
+  it('rejects a keyName that does not include the decorated property', async () => {
+    class KeyWithoutPropertyEntity {
+      @IsUnique<KeyWithoutPropertyEntity, 'active'>({ keyName: 'unique_constraint_reservations_on_resource_and_quantity' })
+      active = true;
+    }
+
+    const entityManager = { dataSource: { getMetadata: () => dataSource.getMetadata(ReservationEntity) } } as unknown as EntityManager;
+
+    await expect(
+      validateOrFail({ entity: new KeyWithoutPropertyEntity(), entityManager, operation: { type: 'insert' } })
+    ).rejects.toThrow(new ArgumentError('KeyWithoutPropertyEntity.active: key unique_constraint_reservations_on_resource_and_quantity does not include the decorated property'));
+  });
+
+  it('rejects an unknown keyName', async () => {
+    class UnknownKeyEntity {
+      @IsUnique<UnknownKeyEntity, 'resource'>({ keyName: 'index_missing' })
+      resource = 'room';
+    }
+
+    const entityManager = { dataSource: { getMetadata: () => dataSource.getMetadata(ReservationEntity) } } as unknown as EntityManager;
+
+    await expect(
+      validateOrFail({ entity: new UnknownKeyEntity(), entityManager, operation: { type: 'insert' } })
+    ).rejects.toThrow(new ArgumentError('Unknown index index_missing on entity ReservationEntity'));
+  });
+
+  describe.skipIf(database !== 'postgres')('with a partial index as keyName', () => {
+    it('rejects a duplicate inside the partial index', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+      await expect(
+        ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }))
+      ).rejects.toThrow(new ValidationError({ resource: ['is already taken'] }));
+    });
+
+    it('ignores rows outside the partial index', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }));
+
+      await expect(ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }))).resolves.toBeDefined();
+    });
+
+    it('skips the check when upserting on its keyName', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+      await expect(
+        ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }), { updates: ['quantity'], keyName: 'unique_index_reservations_on_resource' })
+      ).resolves.toMatchObject({ quantity: 2 });
+    });
+
+    it('still checks when upserting on another keyName', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+      await expect(
+        ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }), { updates: ['active'], keyName: 'unique_constraint_reservations_on_resource_and_quantity' })
+      ).rejects.toThrow(new ValidationError({ resource: ['is already taken'] }));
+    });
+  });
 });
 
 describe('dependencies', () => {
@@ -337,8 +407,8 @@ describe('ValidationHelpers', () => {
           isUpdateName: isUpdate('name'),
           isUpdateLabel: isUpdate('label'),
           isUpsert: isUpsert(),
-          isUpsertNameKey: isUpsert('unique_probe_name'),
-          isUpsertLabelKey: isUpsert('unique_probe_label'),
+          isUpsertNameKey: isUpsert('unique_index_probes_on_name'),
+          isUpsertLabelKey: isUpsert('unique_index_probes_on_label'),
           isDirtyName: isDirty('name'),
           isDirtyLabel: isDirty('label'),
         });
@@ -388,7 +458,7 @@ describe('ValidationHelpers', () => {
   });
 
   it('reports an upsert on its keyName, with every property dirty', async () => {
-    await expect(probeHelpers({ type: 'upsert', keyName: 'unique_probe_name' })).resolves.toEqual([expect.objectContaining({
+    await expect(probeHelpers({ type: 'upsert', keyName: 'unique_index_probes_on_name' })).resolves.toEqual([expect.objectContaining({
       isInsert: false,
       isUpdate: false,
       isUpdateName: false,

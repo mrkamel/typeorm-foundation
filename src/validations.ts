@@ -5,6 +5,7 @@ import { IsNull, Raw } from 'typeorm';
 import type { EntityManager, ObjectLiteral } from 'typeorm';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ArgumentError, MissingValidationContextError, ValidationError } from './errors';
+import { getKeyMetadata } from './keys';
 import { singleton } from './singleton';
 
 export type ValidationOperation =
@@ -213,43 +214,53 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
 
 export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(
   options?: {
-    scope?: Extract<keyof Entity, string>[],
     caseInsensitive?: 'upper' | 'lower',
     validateIf?: (entity: Entity, helpers: ValidationHelpers<Entity>) => boolean,
     dependencies?: Extract<keyof Entity, string>[],
     message?: MessageOption,
-  },
+  } & ({ scope?: Extract<keyof Entity, string>[], keyName?: never } | { keyName: string, scope?: never }),
 ) {
   return function (target: Entity, propertyName: Key) {
-    const fullDependencies = [propertyName, ...options?.scope ?? [], ...options?.dependencies ?? []];
-
     registerDecorator({
       name: `isUnique:${target.constructor.name}:${randomUUID()}`,
       target: target.constructor,
       propertyName,
       validator: {
         validate: async (value, validationArguments) => {
-          if (hasFailedDependencies(fullDependencies)) return true;
+          const context = getValidationContextOrFail();
+          const entity = validationArguments?.object as Entity;
+          const metadata = context.entityManager.dataSource.getMetadata(entity.constructor);
+          const keyMetadata = options?.keyName === undefined ? null : getKeyMetadata(metadata, options.keyName);
+          const keyPropertyNames = keyMetadata?.columns.map(column => column.propertyName);
+
+          if (keyPropertyNames && !keyPropertyNames.includes(propertyName)) {
+            throw new ArgumentError(`${target.constructor.name}.${propertyName}: key ${options?.keyName} does not include the decorated property`);
+          }
+
+          const scopeKeys = keyPropertyNames?.filter(key => key !== propertyName) ?? options?.scope ?? [];
+
+          if (hasFailedDependencies([propertyName, ...scopeKeys, ...options?.dependencies ?? []])) return true;
           if (value === undefined) return false;
 
-          const entity = validationArguments?.object as Entity;
+          const helpers = createValidationHelpers<Entity>();
 
-          if (options?.validateIf && !options.validateIf(entity, createValidationHelpers<Entity>())) return true;
+          if (options?.keyName !== undefined && helpers.isUpsert(options.keyName)) return true;
+          if (options?.validateIf && !options.validateIf(entity, helpers)) return true;
 
-          const context = getValidationContextOrFail();
-          const repository = context.entityManager.getRepository(entity.constructor);
-
-          const scopeEntries = (options?.scope ?? []).map(key => [key, (entity as any)[key]] as const);
+          const scopeEntries = scopeKeys.map(key => [key, (entity as any)[key]] as const);
           if (scopeEntries.some(([, scopeValue]) => scopeValue === undefined)) return false;
 
           const scope = Object.fromEntries(scopeEntries.map(([key, scopeValue]) => [key, scopeValue === null ? IsNull() : scopeValue]));
-          const primaryColumns = context.entityManager.dataSource.getMetadata(entity.constructor).primaryColumns.map(column => column.propertyName);
+          const primaryColumns = metadata.primaryColumns.map(column => column.propertyName);
 
-          const existing = await repository.find({
-            select: Object.fromEntries(primaryColumns.map(key => [key, true])),
-            where: { [propertyName]: matchValue(value, options?.caseInsensitive), ...scope },
-            take: 2,
-          });
+          const query = context.entityManager.getRepository(entity.constructor).createQueryBuilder('entity')
+            .select(primaryColumns.map(key => `entity.${key}`))
+            .where({ [propertyName]: matchValue(value, options?.caseInsensitive), ...scope })
+            .limit(2);
+
+          if (keyMetadata?.where) query.andWhere(`(${keyMetadata.where})`);
+
+          const existing = await query.getMany();
 
           const hasPrimaryKeyValue = primaryColumns.length > 0 && primaryColumns.every(key => (entity as any)[key] != null);
 

@@ -1,5 +1,6 @@
 import { validateOrFail } from './validations';
 import { ArgumentError, NotFoundError } from './errors';
+import { getKeyMetadata } from './keys';
 import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository } from 'typeorm';
 
 export type AtLeastOne<T, Keys extends keyof T = keyof T> = {
@@ -143,19 +144,10 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         if (index === undefined) return { columnNames: this._getPrimaryColumns().map(column => column.databaseName) };
 
-        const indexMetadata = metadata.indices.find(candidate => candidate.name === index);
+        const keyMetadata = getKeyMetadata(metadata, index);
+        if (keyMetadata.deferrable) throw new ArgumentError(`Unique ${index} on entity ${entityName} is deferrable`);
 
-        if (indexMetadata) {
-          if (!indexMetadata.isUnique) throw new ArgumentError(`Index ${index} on entity ${entityName} is not unique`);
-
-          return { columnNames: indexMetadata.columns.map(column => column.databaseName), where: indexMetadata.where };
-        }
-
-        const uniqueMetadata = metadata.uniques.find(candidate => candidate.name === index);
-        if (!uniqueMetadata) throw new ArgumentError(`Unknown index ${index} on entity ${entityName}`);
-        if (uniqueMetadata.deferrable) throw new ArgumentError(`Unique ${index} on entity ${entityName} is deferrable`);
-
-        return { columnNames: uniqueMetadata.columns.map(column => column.databaseName) };
+        return { columnNames: keyMetadata.columns.map(column => column.databaseName), where: keyMetadata.where };
       },
       _getUpdateDatePropertyNames() {
         const metadata = this.metadata;

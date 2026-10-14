@@ -249,7 +249,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
 
     const result = await ReservationRepository.upsertEntity(
       new ReservationEntity({ resource: 'room', active: true, quantity: 2 }),
-      { updates: ['quantity'], keyName: 'index_reservations_resource' }
+      { updates: ['quantity'], keyName: 'unique_index_reservations_on_resource' }
     );
 
     expect(result.id).toBe(reservation.id);
@@ -262,7 +262,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
 
     const result = await ReservationRepository.upsertEntity(
       new ReservationEntity({ resource: 'room', active: true, quantity: 2 }),
-      { updates: ['quantity'], keyName: 'index_reservations_resource' }
+      { updates: ['quantity'], keyName: 'unique_index_reservations_on_resource' }
     );
 
     expect(result.id).not.toBe(reservation.id);
@@ -274,7 +274,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
 
     const result = await ReservationRepository.upsertEntity(
       new ReservationEntity({ resource: 'room', active: false, quantity: 1 }),
-      { updates: ['active'], keyName: 'unique_reservations_resource_quantity' }
+      { updates: ['active'], keyName: 'unique_constraint_reservations_on_resource_and_quantity' }
     );
 
     expect(result.id).toBe(reservation.id);
@@ -296,14 +296,14 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
 
   it('throws an ArgumentError for an index that is not unique', async () => {
     await expect(
-      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'index_reservations_quantity' })
-    ).rejects.toThrow(new ArgumentError('Index index_reservations_quantity on entity ReservationEntity is not unique'));
+      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'index_reservations_on_quantity' })
+    ).rejects.toThrow(new ArgumentError('Index index_reservations_on_quantity on entity ReservationEntity is not unique'));
   });
 
   it('throws an ArgumentError for a deferrable unique', async () => {
     await expect(
-      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'unique_reservations_id_resource' })
-    ).rejects.toThrow(new ArgumentError('Unique unique_reservations_id_resource on entity ReservationEntity is deferrable'));
+      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'unique_constraint_reservations_on_id_and_resource' })
+    ).rejects.toThrow(new ArgumentError('Unique unique_constraint_reservations_on_id_and_resource on entity ReservationEntity is deferrable'));
   });
 });
 

@@ -129,8 +129,8 @@ Each repository built from it is a TypeORM `Repository<Entity>` extended with:
   the factory's `extensions` for methods every repository should have.
 - **`validateEntityOrFail(entity, fields)`** — no-op by default; override per
   repository (via `override(...)`) to add validation beyond what decorators
-  express. Called with `fields: null` on insert/upsert and the list of changed
-  keys on update.
+  express. Called with `fields: null` on insert/upsert and the keys of `updates`
+  on update, whether or not their values changed.
 
 `FoundationRepository<Entity>` is the type of what `createFoundationRepository(repository)`
 returns — useful for typing a function that accepts one of these repositories,
@@ -151,7 +151,9 @@ you'd normally raise from your own `validateEntityOrFail` override).
   unknown, not unique or a deferrable `@Unique`. It is also thrown for
   `upsertEntity` without `keyName`, `updateEntity` or `reload` on an entity whose
   class declares no primary key (e.g. a `@ViewEntity`), and
-  `updateEntity`/`reload` on an entity whose primary key isn't set.
+  `updateEntity`/`reload` on an entity whose primary key isn't set. `IsUnique`
+  throws it on the first validation when its `keyName` is unknown, not unique
+  or doesn't include the decorated property.
 - **`MissingValidationContextError`** — thrown when something that needs the
   validation context runs outside it, i.e. one of the
   `ValidateWith`/`References`/`IsUnique` decorators called outside a
@@ -231,9 +233,9 @@ column makes the driver raise instead of the validation failing cleanly.
 `validateOrFail` therefore validates in two passes: the first runs the standard
 `class-validator` decorators, the second runs the ones below, each skipped
 unless every property it depends on survived the first pass. A decorator
-depends on the property it is attached to, plus `IsUnique`'s `scope` columns,
-plus anything named in its `dependencies` option — declare that whenever a
-callback reads other properties off the entity:
+depends on the property it is attached to, plus `IsUnique`'s `scope` (or
+`keyName`) columns, plus anything named in its `dependencies` option — declare
+that whenever a callback reads other properties off the entity:
 
 ```ts
 @Column({ type: 'text' })
@@ -294,7 +296,7 @@ teamId!: string | null;
   })
   membershipId!: string;
   ```
-- **`IsUnique({ scope?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
+- **`IsUnique({ scope? | keyName?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
   another row (excluding the entity's own primary key) already has this value,
   optionally scoped to a set of sibling columns. `caseInsensitive` makes the
   comparison ignore case by normalising both sides with SQL `UPPER()`
@@ -302,6 +304,20 @@ teamId!: string | null;
   index you have, so the lookup can still use it. Left undefined (the default),
   the value is compared as-is. It applies to the decorated property only, not to
   `scope` columns, and only when the value is a string.
+
+  Instead of `scope`, `keyName` names the unique `@Index` or `@Unique` that
+  backs the check, the same way `upsertEntity` takes it: the key's other columns
+  become the scope, and the check is skipped while `upsertEntity` targets that
+  key, since the upsert absorbs exactly that conflict. For a partial `@Index`,
+  only rows matching its `where` count; the entity's own side can't be checked
+  against raw SQL, so mirror the predicate in `validateIf`. A `keyName` that is
+  unknown, not unique or doesn't include the decorated property throws
+  `ArgumentError` on the first validation.
+
+  ```ts
+  @IsUnique<ReservationEntity, 'resource'>({ keyName: 'unique_index_reservations_on_resource', validateIf: (reservation) => reservation.active })
+  resource!: string;
+  ```
 - **`helpers`** — passed to every `validateIf` and `validate` callback above,
   typed against the entity:
   - `manager` — the entity manager of the running write.
@@ -315,7 +331,7 @@ teamId!: string | null;
   - `isDirty(property)` — `isInsert() || isUpsert() || isUpdate(property)`.
 
   ```ts
-  @IsUnique({ validateIf: (_user, { isDirty, isUpsert }) => isDirty('email') && !isUpsert('unique_users_email') })
+  @IsUnique({ keyName: 'unique_index_users_on_email', validateIf: (_user, { isDirty }) => isDirty('email') })
   email!: string;
   ```
 - **`validateOrFail({ entity, entityManager, operation })`** — runs both passes
