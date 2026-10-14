@@ -22,7 +22,7 @@ Peer dependencies (bring your own versions): `typeorm`, `class-validator`.
 import { DataSource } from 'typeorm';
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { IsEmail } from 'class-validator';
-import { createRepositoryFactory, IsUnique } from 'typeorm-foundation';
+import { createRepositoryFactory, isDirty, IsUnique } from 'typeorm-foundation';
 
 @Entity('users')
 class UserEntity {
@@ -31,7 +31,7 @@ class UserEntity {
 
   @Column({ type: 'text' })
   @IsEmail()
-  @IsUnique({ validateIf: (_user, { isDirty }) => isDirty('email') })
+  @IsUnique({ validateIf: (user) => isDirty(user, 'email') })
   email!: string;
 
   constructor(values: Partial<UserEntity> = {}) {
@@ -155,9 +155,9 @@ you'd normally raise from your own `validateEntityOrFail` override).
   throws it on the first validation when its `keyName` is unknown, not unique
   or doesn't include the decorated property.
 - **`MissingValidationContextError`** — thrown when something that needs the
-  validation context runs outside it, i.e. one of the
-  `ValidateWith`/`References`/`IsUnique` decorators called outside a
-  `validateOrFail` run.
+  validation context runs outside it, i.e. `isInsert`/`isUpdate`/`isUpsert`/
+  `isDirty` or one of the `ValidateWith`/`References`/`IsUnique` decorators
+  called outside a `validateOrFail` run.
 - **`NotFoundError`** — thrown by `reload` when the entity no longer exists.
 - **`ValidationError`** — thrown by `validateOrFail` (and so by
   `insertEntity`/`updateEntity`/`upsertEntity`); `error.errors` is a
@@ -261,7 +261,7 @@ teamId!: string | null;
 ```
 
 - **`ValidateWith(validate, { dependencies? })`** — property decorator;
-  `validate(value, entity, helpers)` returns an error string (or a
+  `validate(value, entity, manager)` returns an error string (or a
   `Promise` of one) to fail, `undefined` to pass. The returned string is the
   message, so there is no separate `message` option — to reuse a shared
   predicate with a per-property message, wrap it: `ValidateWith((value) =>
@@ -282,7 +282,7 @@ teamId!: string | null;
   length mismatch with the default `primaryKey` or a related entity without
   primary key on the first validation, even if `validateIf` or a `null` value
   would skip the lookup. Only the `primaryKey` columns are selected
-  unless the optional `validate(relatedEntity, entity, helpers)` callback is given, which
+  unless the optional `validate(relatedEntity, entity)` callback is given, which
   receives the full row and can reject further (e.g. a status check), returning
   an error string the same way `ValidateWith` does.
 
@@ -318,26 +318,28 @@ teamId!: string | null;
   @IsUnique<ReservationEntity, 'resource'>({ keyName: 'unique_index_reservations_on_resource', validateIf: (reservation) => reservation.active })
   resource!: string;
   ```
-- **`helpers`** — passed to every `validateIf` and `validate` callback above,
-  typed against the entity:
-  - `manager` — the entity manager of the running write.
+- **`isInsert()` / `isUpdate(entity, property?)` / `isUpsert(keyName?)` /
+  `isDirty(entity, property)`** — call from inside a validator (or an entity's
+  own `@ValidateIf`) to check the running write; the entity argument only types
+  `property`:
   - `isInsert()` — true inside `insertEntity`.
-  - `isUpdate(property?)` — true inside `updateEntity`; with a property, only
-    when it is a key of the `updates` passed in, whether or not its value
-    changed.
+  - `isUpdate(entity, property?)` — true inside `updateEntity`; with a
+    property, only when it is a key of the `updates` passed in, whether or not
+    its value changed.
   - `isUpsert(keyName?)` — true inside `upsertEntity`; with a `keyName`, only
     when the upsert targets that key. An upsert is neither an insert nor an
     update, since which one it becomes is only known after the write.
-  - `isDirty(property)` — `isInsert() || isUpsert() || isUpdate(property)`.
+  - `isDirty(entity, property)` — `isInsert() || isUpsert() ||
+    isUpdate(entity, property)`.
 
   ```ts
-  @IsUnique({ keyName: 'unique_index_users_on_email', validateIf: (_user, { isDirty }) => isDirty('email') })
+  @IsUnique({ keyName: 'unique_index_users_on_email', validateIf: (user) => isDirty(user, 'email') })
   email!: string;
   ```
 - **`validateOrFail({ entity, entityManager, operation })`** — runs both passes
   described above over `entity` and throws `ValidationError` (see
-  [Errors](#errors)) if any decorator fails; `operation` is what the helpers
-  report: `{ type: 'insert' }`, `{ type: 'update', properties }` or
+  [Errors](#errors)) if any decorator fails; `operation` is what `isInsert`/
+  `isUpdate`/`isUpsert`/`isDirty` report: `{ type: 'insert' }`, `{ type: 'update', properties }` or
   `{ type: 'upsert', keyName }`. Standard `class-validator` decorators run in
   both passes, so keep your own custom decorators free of side effects, or give
   them a `validateIf` that makes the second run cheap.
