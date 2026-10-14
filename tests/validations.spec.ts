@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { IsString } from 'class-validator';
-import { ArgumentError, ValidationError } from '../src';
-import { IsUnique, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import { ArgumentError, MissingValidationContextError, ValidationError } from '../src';
+import { isDirty, isInsert, IsUnique, isUpdate, isUpsert, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
 import type { ValidationOperation } from '../src/validations';
 import { database, dataSource } from './dataSource';
 import { ReservationRepository } from './repositories/ReservationRepository';
@@ -50,6 +50,19 @@ describe('ValidateWith', () => {
     const user = new UserEntity({ email: 'message2@example.com', age: null, teamId: null, displayName: 'Ada' });
 
     await expect(UserRepository.insertEntity(user)).resolves.toBeDefined();
+  });
+
+  it('passes the entity manager', async () => {
+    const managers: EntityManager[] = [];
+
+    class ManagerProbeEntity {
+      @ValidateWith<ManagerProbeEntity, 'name'>((_value, _entity, manager) => void managers.push(manager))
+      name = 'probe';
+    }
+
+    await validateOrFail({ entity: new ManagerProbeEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } });
+
+    expect(managers).toEqual([dataSource.manager]);
   });
 });
 
@@ -413,23 +426,22 @@ describe('validationContext', () => {
   });
 });
 
-describe('ValidationHelpers', () => {
+describe('operation helpers', () => {
   const probeHelpers = async (operation: ValidationOperation) => {
     const results: Record<string, unknown>[] = [];
 
     class HelpersProbeEntity {
-      @ValidateWith<HelpersProbeEntity, 'name'>((_value, _entity, { manager, isInsert, isUpdate, isUpsert, isDirty }) => {
+      @ValidateWith<HelpersProbeEntity, 'name'>((_value, entity) => {
         results.push({
-          manager,
           isInsert: isInsert(),
-          isUpdate: isUpdate(),
-          isUpdateName: isUpdate('name'),
-          isUpdateLabel: isUpdate('label'),
+          isUpdate: isUpdate(entity),
+          isUpdateName: isUpdate(entity, 'name'),
+          isUpdateLabel: isUpdate(entity, 'label'),
           isUpsert: isUpsert(),
           isUpsertNameKey: isUpsert('unique_index_probes_on_name'),
           isUpsertLabelKey: isUpsert('unique_index_probes_on_label'),
-          isDirtyName: isDirty('name'),
-          isDirtyLabel: isDirty('label'),
+          isDirtyName: isDirty(entity, 'name'),
+          isDirtyLabel: isDirty(entity, 'label'),
         });
       })
       name = 'probe';
@@ -442,10 +454,8 @@ describe('ValidationHelpers', () => {
     return results;
   };
 
-  it('passes the entity manager', async () => {
-    const [helpers] = await probeHelpers({ type: 'insert' });
-
-    expect(helpers!.manager).toBe(dataSource.manager);
+  it('throws outside a validation', () => {
+    expect(() => isInsert()).toThrow(new MissingValidationContextError('Validation context is not available'));
   });
 
   it('reports an insert, with every property dirty', async () => {

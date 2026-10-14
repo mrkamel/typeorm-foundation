@@ -83,27 +83,28 @@ function matchValue(value: unknown, caseInsensitive: 'upper' | 'lower' | undefin
   return Raw((columnAlias) => `${fn}(${columnAlias}) = ${fn}(:uniquenessValue)`, { uniquenessValue: value });
 }
 
-export type ValidationHelpers<Entity extends object> = {
-  manager: EntityManager,
-  isInsert: () => boolean,
-  isUpdate: (property?: Extract<keyof Entity, string>) => boolean,
-  isUpsert: (keyName?: string) => boolean,
-  isDirty: (property: Extract<keyof Entity, string>) => boolean,
-};
+export function isInsert() {
+  return getValidationContextOrFail().operation.type === 'insert';
+}
 
-function createValidationHelpers<Entity extends object>(): ValidationHelpers<Entity> {
-  const { entityManager, operation } = getValidationContextOrFail();
+export function isUpdate<Entity extends object>(_entity: Entity, property?: Extract<keyof Entity, string>) {
+  const { operation } = getValidationContextOrFail();
 
-  const isInsert = () => operation.type === 'insert';
-  const isUpdate = (property?: Extract<keyof Entity, string>) => operation.type === 'update' && (property === undefined || operation.properties.includes(property));
-  const isUpsert = (keyName?: string) => operation.type === 'upsert' && (keyName === undefined || operation.keyName === keyName);
-  const isDirty = (property: Extract<keyof Entity, string>) => isInsert() || isUpsert() || isUpdate(property);
+  return operation.type === 'update' && (property === undefined || operation.properties.includes(property));
+}
 
-  return { manager: entityManager, isInsert, isUpdate, isUpsert, isDirty };
+export function isUpsert(keyName?: string) {
+  const { operation } = getValidationContextOrFail();
+
+  return operation.type === 'upsert' && (keyName === undefined || operation.keyName === keyName);
+}
+
+export function isDirty<Entity extends object>(entity: Entity, property: Extract<keyof Entity, string>) {
+  return isInsert() || isUpsert() || isUpdate(entity, property);
 }
 
 export function ValidateWith<Entity extends object, Key extends Extract<keyof Entity, string>>(
-  validate: (value: Entity[Key], entity: Entity, helpers: ValidationHelpers<Entity>) => Promise<string | undefined> | string | undefined,
+  validate: (value: Entity[Key], entity: Entity, manager: EntityManager) => Promise<string | undefined> | string | undefined,
   options?: { dependencies?: Extract<keyof Entity, string>[] },
 ) {
   return function (target: Entity, propertyName: Key) {
@@ -120,7 +121,7 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
 
           const context = getValidationContextOrFail();
           const entity = validationArguments?.object as Entity;
-          const errorMessage = await validate(value, entity, createValidationHelpers<Entity>());
+          const errorMessage = await validate(value, entity, context.entityManager);
 
           if (errorMessage) {
             context.customErrors[name] = errorMessage;
@@ -138,8 +139,8 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
 export function References<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>, Related = any>(
   relatedEntity: () => Function,
   options?: {
-    validate?: (related: Related, entity: Entity, helpers: ValidationHelpers<Entity>) => Promise<string | undefined> | string | undefined,
-    validateIf?: (entity: Entity, helpers: ValidationHelpers<Entity>) => boolean,
+    validate?: (related: Related, entity: Entity) => Promise<string | undefined> | string | undefined,
+    validateIf?: (entity: Entity) => boolean,
     dependencies?: Extract<keyof Entity, string>[],
     message?: MessageOption,
     foreignKey?: Extract<keyof Entity, string> | Extract<keyof Entity, string>[],
@@ -181,9 +182,8 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
           if (hasFailedDependencies(fullDependencies)) return true;
 
           const entity = validationArguments?.object as Entity;
-          const helpers = createValidationHelpers<Entity>();
 
-          if (options?.validateIf && !options.validateIf(entity, helpers)) return true;
+          if (options?.validateIf && !options.validateIf(entity)) return true;
 
           const foreignKeyValues = foreignKeys.map(key => entity[key]);
           if (foreignKeyValues.some(foreignKeyValue => foreignKeyValue == null)) return false;
@@ -196,7 +196,7 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
           if (!existing) return false;
 
           if (options?.validate) {
-            const errorMessage = await options.validate(existing as Related, entity, helpers);
+            const errorMessage = await options.validate(existing as Related, entity);
 
             if (errorMessage) {
               context.customErrors[name] = errorMessage;
@@ -215,7 +215,7 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
 export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(
   options?: {
     caseInsensitive?: 'upper' | 'lower',
-    validateIf?: (entity: Entity, helpers: ValidationHelpers<Entity>) => boolean,
+    validateIf?: (entity: Entity) => boolean,
     dependencies?: Extract<keyof Entity, string>[],
     message?: MessageOption,
   } & ({ scope?: Extract<keyof Entity, string>[], keyName?: never } | { keyName: string, scope?: never }),
@@ -242,10 +242,8 @@ export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof
           if (hasFailedDependencies([propertyName, ...scopeKeys, ...options?.dependencies ?? []])) return true;
           if (value === undefined) return false;
 
-          const helpers = createValidationHelpers<Entity>();
-
-          if (options?.keyName !== undefined && helpers.isUpsert(options.keyName)) return true;
-          if (options?.validateIf && !options.validateIf(entity, helpers)) return true;
+          if (options?.keyName !== undefined && isUpsert(options.keyName)) return true;
+          if (options?.validateIf && !options.validateIf(entity)) return true;
 
           const scopeEntries = scopeKeys.map(key => [key, (entity as any)[key]] as const);
           if (scopeEntries.some(([, scopeValue]) => scopeValue === undefined)) return false;
