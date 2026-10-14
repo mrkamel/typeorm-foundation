@@ -22,7 +22,7 @@ Peer dependencies (bring your own versions): `typeorm`, `class-validator`.
 import { DataSource } from 'typeorm';
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { IsEmail } from 'class-validator';
-import { createRepositoryFactory, isDirty, IsUnique } from 'typeorm-foundation';
+import { createRepositoryFactory, IsUnique } from 'typeorm-foundation';
 
 @Entity('users')
 class UserEntity {
@@ -31,7 +31,7 @@ class UserEntity {
 
   @Column({ type: 'text' })
   @IsEmail()
-  @IsUnique({ validateIf: (user) => isDirty(user, 'email') })
+  @IsUnique({ validateIf: (_user, { isDirty }) => isDirty('email') })
   email!: string;
 
   constructor(values: Partial<UserEntity> = {}) {
@@ -101,16 +101,21 @@ Each repository built from it is a TypeORM `Repository<Entity>` extended with:
   columns that actually changed. No-ops (skipping validation and listeners) when
   `updates` is empty. Automatically bumps any `isUpdateDate` column not
   explicitly included in `updates`.
-- **`upsertEntity(entity, { updates, key?, indexPredicate? })`** — validates,
-  then runs `INSERT ... ON CONFLICT (key) DO UPDATE ... RETURNING *`, hydrating
-  the returned row (including any column transformers) back onto `entity`.
+- **`upsertEntity(entity, { updates, keyName? })`** — validates, then runs
+  `INSERT ... ON CONFLICT (columns) DO UPDATE ... RETURNING *`, hydrating the
+  returned row (including any column transformers) back onto `entity`.
   `updates` is either a list of property names to write or an object of values
-  to merge onto the entity first. Needs a driver that supports `INSERT ...
-  RETURNING` (`driver.isReturningSqlSupported('insert')`); otherwise TypeORM
-  throws `ReturningStatementNotSupportedError`. When `key` targets a partial
-  unique index, pass its condition as `indexPredicate` (e.g.
-  `'"is_active" = true'`); Postgres only, since Postgres can only infer a partial
-  index from `ON CONFLICT (key) WHERE (predicate)`.
+  to merge onto the entity first. `keyName` names the unique `@Index` or `@Unique`
+  to resolve conflicts against; its columns (and, for a partial `@Index`, its
+  `where` predicate) form the conflict target, so the constraint is defined once
+  on the entity. Without `keyName`, conflicts resolve against the primary key.
+  TypeORM never reads migrations, so declare the index with `@Index` or
+  `@Unique` even when a migration creates it. A partial `@Index` only works on
+  Postgres; other drivers reject its predicate. Give the index an explicit
+  name — generated names are hashes, so a column-level
+  `@Column({ unique: true })` has no stable name to target. Needs a driver that
+  supports `INSERT ... RETURNING` (`driver.isReturningSqlSupported('insert')`);
+  otherwise TypeORM throws `ReturningStatementNotSupportedError`.
 - **`upsertOrFailBy(findCondition, updates)`** — `updateEntity` if a row
   matching `findCondition` exists, otherwise `insertEntity`.
 - **`removeEntity(entity)`** — removes a clone of `entity` so the original
@@ -124,8 +129,8 @@ Each repository built from it is a TypeORM `Repository<Entity>` extended with:
   the factory's `extensions` for methods every repository should have.
 - **`validateEntityOrFail(entity, fields)`** — no-op by default; override per
   repository (via `override(...)`) to add validation beyond what decorators
-  express. Called with `fields: null` on insert/upsert and the list of changed
-  keys on update.
+  express. Called with `fields: null` on insert/upsert and the keys of `updates`
+  on update, whether or not their values changed.
 
 `FoundationRepository<Entity>` is the type of what `createFoundationRepository(repository)`
 returns — useful for typing a function that accepts one of these repositories,
@@ -142,12 +147,16 @@ you'd normally raise from your own `validateEntityOrFail` override).
 
 - **`ArgumentError`** — thrown when a call into the repository is malformed
   rather than the data being invalid: `upsertEntity` with an empty `updates`
-  list or with an `updates`/`key` entry that maps to no column, and
-  `updateEntity`/`reload` on an entity whose class declares no primary key or
-  whose primary key isn't set.
+  list, an `updates` entry that maps to no column, or a `keyName` that is
+  unknown, not unique or a deferrable `@Unique`. It is also thrown for
+  `upsertEntity` without `keyName`, `updateEntity` or `reload` on an entity whose
+  class declares no primary key (e.g. a `@ViewEntity`), and
+  `updateEntity`/`reload` on an entity whose primary key isn't set. `IsUnique`
+  throws it on the first validation when its `keyName` is unknown, not unique
+  or doesn't include the decorated property.
 - **`MissingValidationContextError`** — thrown when something that needs the
-  validation context runs outside it, i.e. `isNew`/`isChanged`/`isDirty` or one
-  of the `ValidateWith`/`References`/`IsUnique` decorators called outside a
+  validation context runs outside it, i.e. one of the
+  `ValidateWith`/`References`/`IsUnique` decorators called outside a
   `validateOrFail` run.
 - **`NotFoundError`** — thrown by `reload` when the entity no longer exists.
 - **`ValidationError`** — thrown by `validateOrFail` (and so by
@@ -224,9 +233,9 @@ column makes the driver raise instead of the validation failing cleanly.
 `validateOrFail` therefore validates in two passes: the first runs the standard
 `class-validator` decorators, the second runs the ones below, each skipped
 unless every property it depends on survived the first pass. A decorator
-depends on the property it is attached to, plus `IsUnique`'s `scope` columns,
-plus anything named in its `dependencies` option — declare that whenever a
-callback reads other properties off the entity:
+depends on the property it is attached to, plus `IsUnique`'s `scope` (or
+`keyName`) columns, plus anything named in its `dependencies` option — declare
+that whenever a callback reads other properties off the entity:
 
 ```ts
 @Column({ type: 'text' })
@@ -252,7 +261,7 @@ teamId!: string | null;
 ```
 
 - **`ValidateWith(validate, { dependencies? })`** — property decorator;
-  `validate(value, entity, entityManager)` returns an error string (or a
+  `validate(value, entity, helpers)` returns an error string (or a
   `Promise` of one) to fail, `undefined` to pass. The returned string is the
   message, so there is no separate `message` option — to reuse a shared
   predicate with a per-property message, wrap it: `ValidateWith((value) =>
@@ -273,7 +282,7 @@ teamId!: string | null;
   length mismatch with the default `primaryKey` or a related entity without
   primary key on the first validation, even if `validateIf` or a `null` value
   would skip the lookup. Only the `primaryKey` columns are selected
-  unless the optional `validate(relatedEntity, entity)` callback is given, which
+  unless the optional `validate(relatedEntity, entity, helpers)` callback is given, which
   receives the full row and can reject further (e.g. a status check), returning
   an error string the same way `ValidateWith` does.
 
@@ -287,7 +296,7 @@ teamId!: string | null;
   })
   membershipId!: string;
   ```
-- **`IsUnique({ scope?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
+- **`IsUnique({ scope? | keyName?, caseInsensitive?, validateIf?, dependencies?, message? })`** — fails if
   another row (excluding the entity's own primary key) already has this value,
   optionally scoped to a set of sibling columns. `caseInsensitive` makes the
   comparison ignore case by normalising both sides with SQL `UPPER()`
@@ -295,25 +304,43 @@ teamId!: string | null;
   index you have, so the lookup can still use it. Left undefined (the default),
   the value is compared as-is. It applies to the decorated property only, not to
   `scope` columns, and only when the value is a string.
-- **`isNew(entity)` / `isChanged(entity, property)` /
-  `isDirty(entity, property)`** — call from inside a validator (or an entity's own
-  `@ValidateIf`) to check the entity against the pre-update snapshot: `isNew` is
-  true when there is no snapshot (an insert), `isChanged` compares the property
-  to the snapshot, `isDirty` is `isNew(entity) || isChanged(entity, property)`.
-- **`validateOrFail({ entity, entityManager, original })`** — runs both passes
-  described above over `entity` and throws `ValidationError` (see
-  [Errors](#errors)) if any decorator fails; `original` is the pre-update
-  snapshot (or `null` for an insert) that `isNew`/`isChanged`/`isDirty` read
-  from. Standard `class-validator` decorators run in both passes, so keep your
-  own custom decorators free of side effects, or give them a `validateIf` that
-  makes the second run cheap.
 
-Please note: typeorm has no real dirty tracking. Therefore, when using
-`insertEntity` everything is assumed to be changed/dirty and `isNew` returns
-true. When using `updateEntity`, `isChanged`/`isDirty` compare each property to
-the pre-update snapshot by reference (`!==`), so an object or array passed as a new
-instance counts as changed even when its contents are equal, while one mutated in
-place and passed back as the same instance does not.
+  Instead of `scope`, `keyName` names the unique `@Index` or `@Unique` that
+  backs the check, the same way `upsertEntity` takes it: the key's other columns
+  become the scope, and the check is skipped while `upsertEntity` targets that
+  key, since the upsert absorbs exactly that conflict. For a partial `@Index`,
+  only rows matching its `where` count; the entity's own side can't be checked
+  against raw SQL, so mirror the predicate in `validateIf`. A `keyName` that is
+  unknown, not unique or doesn't include the decorated property throws
+  `ArgumentError` on the first validation.
+
+  ```ts
+  @IsUnique<ReservationEntity, 'resource'>({ keyName: 'unique_index_reservations_on_resource', validateIf: (reservation) => reservation.active })
+  resource!: string;
+  ```
+- **`helpers`** — passed to every `validateIf` and `validate` callback above,
+  typed against the entity:
+  - `manager` — the entity manager of the running write.
+  - `isInsert()` — true inside `insertEntity`.
+  - `isUpdate(property?)` — true inside `updateEntity`; with a property, only
+    when it is a key of the `updates` passed in, whether or not its value
+    changed.
+  - `isUpsert(keyName?)` — true inside `upsertEntity`; with a `keyName`, only
+    when the upsert targets that key. An upsert is neither an insert nor an
+    update, since which one it becomes is only known after the write.
+  - `isDirty(property)` — `isInsert() || isUpsert() || isUpdate(property)`.
+
+  ```ts
+  @IsUnique({ keyName: 'unique_index_users_on_email', validateIf: (_user, { isDirty }) => isDirty('email') })
+  email!: string;
+  ```
+- **`validateOrFail({ entity, entityManager, operation })`** — runs both passes
+  described above over `entity` and throws `ValidationError` (see
+  [Errors](#errors)) if any decorator fails; `operation` is what the helpers
+  report: `{ type: 'insert' }`, `{ type: 'update', properties }` or
+  `{ type: 'upsert', keyName }`. Standard `class-validator` decorators run in
+  both passes, so keep your own custom decorators free of side effects, or give
+  them a `validateIf` that makes the second run cheap.
 
 ## Testing
 

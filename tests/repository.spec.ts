@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { NotFoundError, FoundationError, ValidationError, createRepositoryFactory } from '../src';
-import type { UpsertEntityOptions } from '../src';
+import { ArgumentError, NotFoundError, FoundationError, ValidationError, createRepositoryFactory } from '../src';
 import { database, dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 import { ReservationRepository } from './repositories/ReservationRepository';
+import { ActiveReservationRepository } from './repositories/ActiveReservationRepository';
 import { createFoundationRepository } from './repositories/createFoundationRepository';
 import { UserEntity } from './entities/UserEntity';
 import { TeamEntity } from './entities/TeamEntity';
 import { ReservationEntity } from './entities/ReservationEntity';
+import { ActiveReservationEntity } from './entities/ActiveReservationEntity';
 
 describe('FoundationError', () => {
   it('is the base class every library error extends', () => {
@@ -166,16 +167,16 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   it('inserts a new row on conflict-free values', async () => {
     const user = new UserEntity({ email: 'fresh@example.com', age: null, teamId: null });
 
-    await UserRepository.upsertEntity(user, { updates: ['age'], key: ['id'] });
+    await UserRepository.upsertEntity(user, { updates: ['age'] });
 
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
     expect(stored.email).toBe('fresh@example.com');
   });
 
-  it('updates the row on a conflicting key', async () => {
+  it('updates the row on a conflicting primary key when no keyName is given', async () => {
     const user = await UserRepository.insertEntity(new UserEntity({ email: 'conflict@example.com', age: 1, teamId: null }));
 
-    await UserRepository.upsertEntity(new UserEntity({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'], key: ['id'] });
+    await UserRepository.upsertEntity(new UserEntity({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'] });
 
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
     expect(stored.age).toBe(2);
@@ -184,7 +185,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   it('accepts an object of values for updates, merging them onto the entity', async () => {
     const user = new UserEntity({ email: 'objectform@example.com', teamId: null });
 
-    await UserRepository.upsertEntity(user, { updates: { age: 7 }, key: ['id'] });
+    await UserRepository.upsertEntity(user, { updates: { age: 7 } });
 
     expect(user.age).toBe(7);
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
@@ -203,7 +204,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
     const updatedAt = user.updatedAt;
 
     await new Promise((resolve) => setTimeout(resolve, 10));
-    await UserRepository.upsertEntity(new UserEntity({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'], key: ['id'] });
+    await UserRepository.upsertEntity(new UserEntity({ id: user.id, email: user.email, age: 2, teamId: null }), { updates: ['age'] });
 
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
     expect(stored.updatedAt.getTime()).toBeGreaterThan(updatedAt.getTime());
@@ -215,7 +216,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
 
     await UserRepository.upsertEntity(
       new UserEntity({ id: user.id, email: user.email, age: 1, teamId: null, updatedAt: explicitDate }),
-      { updates: ['age', 'updatedAt'] as any, key: ['id'] }
+      { updates: ['age', 'updatedAt'] as any }
     );
 
     const stored = await UserRepository.findOneOrFail({ where: { id: user.id } });
@@ -225,7 +226,7 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   it('uses the @Column({ name }) database name in the conflict clause and RETURNING * hydration', async () => {
     const user = new UserEntity({ email: 'database-name@example.com', age: null, teamId: null, displayName: 'Ada' });
 
-    await UserRepository.upsertEntity(user, { updates: ['displayName'] as any, key: ['id'] });
+    await UserRepository.upsertEntity(user, { updates: ['displayName'] as any });
 
     const [rawRow] = await dataSource.query('SELECT display_name FROM users WHERE id = $1', [user.id]);
     expect(rawRow.display_name).toBe('Ada');
@@ -237,18 +238,18 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
   it('applies the column transformer to values returned from RETURNING * before assigning them onto the entity', async () => {
     const user = new UserEntity({ email: 'transformer@example.com', age: null, teamId: null, score: 42 });
 
-    const result = await UserRepository.upsertEntity(user, { updates: ['score'] as any, key: ['id'] });
+    const result = await UserRepository.upsertEntity(user, { updates: ['score'] as any });
 
     expect(result.score).toBe(42);
     expect(typeof result.score).toBe('number');
   });
 
-  it('updates the row matching a partial unique index when given its indexPredicate', async () => {
+  it('updates the row matching a named partial unique index, using its columns and predicate', async () => {
     const reservation = await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
 
     const result = await ReservationRepository.upsertEntity(
       new ReservationEntity({ resource: 'room', active: true, quantity: 2 }),
-      { updates: ['quantity'], key: ['resource'], indexPredicate: '"active" = true' }
+      { updates: ['quantity'], keyName: 'unique_index_reservations_on_resource' }
     );
 
     expect(result.id).toBe(reservation.id);
@@ -256,23 +257,53 @@ describe.skipIf(database !== 'postgres')('upsertEntity', () => {
     await expect(ReservationRepository.countAll()).resolves.toBe(1);
   });
 
-  it('only accepts indexPredicate together with key', () => {
-    // @ts-expect-error indexPredicate requires key
-    const options: UpsertEntityOptions<ReservationEntity> = { updates: ['quantity'], indexPredicate: '"active" = true' };
-
-    expect(options.key).toBeUndefined();
-  });
-
   it('inserts a new row when the only matching row is outside the partial unique index', async () => {
     const reservation = await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }));
 
     const result = await ReservationRepository.upsertEntity(
       new ReservationEntity({ resource: 'room', active: true, quantity: 2 }),
-      { updates: ['quantity'], key: ['resource'], indexPredicate: '"active" = true' }
+      { updates: ['quantity'], keyName: 'unique_index_reservations_on_resource' }
     );
 
     expect(result.id).not.toBe(reservation.id);
     await expect(ReservationRepository.countAll()).resolves.toBe(2);
+  });
+
+  it('updates the row matching a named @Unique, using its columns', async () => {
+    const reservation = await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+    const result = await ReservationRepository.upsertEntity(
+      new ReservationEntity({ resource: 'room', active: false, quantity: 1 }),
+      { updates: ['active'], keyName: 'unique_constraint_reservations_on_resource_and_quantity' }
+    );
+
+    expect(result.id).toBe(reservation.id);
+    expect(result.active).toBe(false);
+    await expect(ReservationRepository.countAll()).resolves.toBe(1);
+  });
+
+  it('throws an ArgumentError when no keyName is given and the entity has no primary key', async () => {
+    await expect(
+      ActiveReservationRepository.upsertEntity(new ActiveReservationEntity({ id: '00000000-0000-0000-0000-000000000000', resource: 'room' }), { updates: ['resource'] })
+    ).rejects.toThrow(new ArgumentError('No primary key defined on entity ActiveReservationEntity'));
+  });
+
+  it('throws an ArgumentError for an unknown index', async () => {
+    await expect(
+      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'index_missing' })
+    ).rejects.toThrow(new ArgumentError('Unknown index index_missing on entity ReservationEntity'));
+  });
+
+  it('throws an ArgumentError for an index that is not unique', async () => {
+    await expect(
+      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'index_reservations_on_quantity' })
+    ).rejects.toThrow(new ArgumentError('Index index_reservations_on_quantity on entity ReservationEntity is not unique'));
+  });
+
+  it('throws an ArgumentError for a deferrable unique', async () => {
+    await expect(
+      ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }), { updates: ['quantity'], keyName: 'unique_constraint_reservations_on_id_and_resource' })
+    ).rejects.toThrow(new ArgumentError('Unique unique_constraint_reservations_on_id_and_resource on entity ReservationEntity is deferrable'));
   });
 });
 

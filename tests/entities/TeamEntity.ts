@@ -1,6 +1,6 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { IsBoolean, IsNotEmpty, IsString } from 'class-validator';
-import { isDirty, IsUnique } from '../../src/validations';
+import { IsUnique } from '../../src/validations';
 
 @Entity('teams')
 export class TeamEntity {
@@ -13,11 +13,11 @@ export class TeamEntity {
   name!: string;
 
   @Column({ type: 'text' })
-  @IsUnique({ scope: ['archived'], validateIf: (team) => isDirty(team, 'code') })
+  @IsUnique({ scope: ['archived'], validateIf: (_team, { isDirty }) => isDirty('code') })
   code!: string;
 
   @Column({ type: 'text', nullable: true })
-  @IsUnique<TeamEntity, 'slug'>({ caseInsensitive: 'lower', validateIf: (team) => team.slug != null && isDirty(team, 'slug') })
+  @IsUnique<TeamEntity, 'slug'>({ caseInsensitive: 'lower', validateIf: (team, { isDirty }) => team.slug != null && isDirty('slug') })
   slug: string | null = null;
 
   @Column({ type: 'boolean', default: false })

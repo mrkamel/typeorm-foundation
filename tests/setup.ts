@@ -13,7 +13,7 @@ afterAll(async () => {
 beforeEach(async () => {
   const escape = (name: string) => dataSource.driver.escape(name);
 
-  for (const entity of dataSource.entityMetadatas) {
+  for (const entity of dataSource.entityMetadatas.filter(metadata => metadata.tableType !== 'view')) {
     await dataSource.query(`DELETE FROM ${escape(entity.tableName)}`);
   }
 

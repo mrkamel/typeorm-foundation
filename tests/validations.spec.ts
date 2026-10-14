@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { IsString } from 'class-validator';
 import { ArgumentError, ValidationError } from '../src';
-import { isChanged, isDirty, isNew, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
-import { dataSource } from './dataSource';
+import { IsUnique, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import type { ValidationOperation } from '../src/validations';
+import { database, dataSource } from './dataSource';
+import { ReservationRepository } from './repositories/ReservationRepository';
+import { ReservationEntity } from './entities/ReservationEntity';
+import { SeatRepository } from './repositories/SeatRepository';
+import { SeatEntity } from './entities/SeatEntity';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 import { MembershipRepository } from './repositories/MembershipRepository';
@@ -84,7 +89,7 @@ describe('References', () => {
       teamId = team.id;
     }
 
-    await validateOrFail({ entity: new FullRowEntity(), entityManager: dataSource.manager, original: null });
+    await validateOrFail({ entity: new FullRowEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } });
 
     expect(relatedRows).toEqual([{ id: team.id, name: 'Research', code: 'research', slug: 'research-team', archived: false }]);
   });
@@ -150,7 +155,7 @@ describe('References', () => {
     }
 
     await expect(
-      validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, original: null })
+      validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } })
     ).rejects.toThrow(new ArgumentError(
       'SingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
     ));
@@ -163,7 +168,7 @@ describe('References', () => {
     }
 
     await expect(
-      validateOrFail({ entity: new SkippedSingleKeyEntity(), entityManager: dataSource.manager, original: null })
+      validateOrFail({ entity: new SkippedSingleKeyEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } })
     ).rejects.toThrow(new ArgumentError(
       'SkippedSingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
     ));
@@ -243,6 +248,91 @@ describe('IsUnique', () => {
 
     await expect(TeamRepository.updateEntity(team, { name: 'Renamed' })).resolves.toBeDefined();
   });
+
+  it('scopes uniqueness to the other columns of its keyName', async () => {
+    await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }));
+
+    await expect(ReservationRepository.insertEntity(new ReservationEntity({ resource: 'hall', active: false, quantity: 1 }))).resolves.toBeDefined();
+
+    await expect(
+      ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }))
+    ).rejects.toThrow(new ValidationError({ quantity: ['is already taken'] }));
+  });
+
+  it('rejects a keyName that does not include the decorated property', async () => {
+    class KeyWithoutPropertyEntity {
+      @IsUnique<KeyWithoutPropertyEntity, 'active'>({ keyName: 'unique_constraint_reservations_on_resource_and_quantity' })
+      active = true;
+    }
+
+    const entityManager = { dataSource: { getMetadata: () => dataSource.getMetadata(ReservationEntity) } } as unknown as EntityManager;
+
+    await expect(
+      validateOrFail({ entity: new KeyWithoutPropertyEntity(), entityManager, operation: { type: 'insert' } })
+    ).rejects.toThrow(new ArgumentError('KeyWithoutPropertyEntity.active: key unique_constraint_reservations_on_resource_and_quantity does not include the decorated property'));
+  });
+
+  it('rejects an unknown keyName', async () => {
+    class UnknownKeyEntity {
+      @IsUnique<UnknownKeyEntity, 'resource'>({ keyName: 'index_missing' })
+      resource = 'room';
+    }
+
+    const entityManager = { dataSource: { getMetadata: () => dataSource.getMetadata(ReservationEntity) } } as unknown as EntityManager;
+
+    await expect(
+      validateOrFail({ entity: new UnknownKeyEntity(), entityManager, operation: { type: 'insert' } })
+    ).rejects.toThrow(new ArgumentError('Unknown index index_missing on entity ReservationEntity'));
+  });
+
+  it('reads a relation column of its keyName through the relation', async () => {
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Seating', code: 'seating', archived: false }));
+    const otherTeam = await TeamRepository.insertEntity(new TeamEntity({ name: 'Other Seating', code: 'other-seating', archived: false }));
+
+    await SeatRepository.insertEntity(new SeatEntity({ team, label: 'seat-1' }));
+
+    await expect(SeatRepository.insertEntity(new SeatEntity({ team: otherTeam, label: 'seat-1' }))).resolves.toBeDefined();
+
+    await expect(
+      SeatRepository.insertEntity(new SeatEntity({ team, label: 'seat-1' }))
+    ).rejects.toThrow(new ValidationError({ label: ['is already taken'] }));
+
+    await expect(
+      SeatRepository.insertEntity(new SeatEntity({ team: new TeamEntity({ id: team.id, name: 'Stale name' }), label: 'seat-1' }))
+    ).rejects.toThrow(new ValidationError({ label: ['is already taken'] }));
+  });
+
+  describe.skipIf(database !== 'postgres')('with a partial index as keyName', () => {
+    it('rejects a duplicate inside the partial index', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+      await expect(
+        ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }))
+      ).rejects.toThrow(new ValidationError({ resource: ['is already taken'] }));
+    });
+
+    it('ignores rows outside the partial index', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: false, quantity: 1 }));
+
+      await expect(ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }))).resolves.toBeDefined();
+    });
+
+    it('skips the check when upserting on its keyName', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+      await expect(
+        ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }), { updates: ['quantity'], keyName: 'unique_index_reservations_on_resource' })
+      ).resolves.toMatchObject({ quantity: 2 });
+    });
+
+    it('still checks when upserting on another keyName', async () => {
+      await ReservationRepository.insertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 1 }));
+
+      await expect(
+        ReservationRepository.upsertEntity(new ReservationEntity({ resource: 'room', active: true, quantity: 2 }), { updates: ['active'], keyName: 'unique_constraint_reservations_on_resource_and_quantity' })
+      ).rejects.toThrow(new ValidationError({ resource: ['is already taken'] }));
+    });
+  });
 });
 
 describe('dependencies', () => {
@@ -271,7 +361,7 @@ describe('dependencies', () => {
       name: unknown = 42;
     }
 
-    await expect(validateOrFail({ entity: new OwnPropertyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    await expect(validateOrFail({ entity: new OwnPropertyEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } })).rejects.toThrow(ValidationError);
     expect(calls).toEqual([]);
   });
 
@@ -286,7 +376,7 @@ describe('dependencies', () => {
       label = 'fine';
     }
 
-    await expect(validateOrFail({ entity: new DeclaredDependencyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    await expect(validateOrFail({ entity: new DeclaredDependencyEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } })).rejects.toThrow(ValidationError);
     expect(calls).toEqual([]);
   });
 
@@ -301,7 +391,7 @@ describe('dependencies', () => {
       label = 'fine';
     }
 
-    await expect(validateOrFail({ entity: new UndeclaredDependencyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    await expect(validateOrFail({ entity: new UndeclaredDependencyEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } })).rejects.toThrow(ValidationError);
     expect(calls).toEqual(['fine']);
   });
 });
@@ -317,63 +407,94 @@ describe('validationContext', () => {
       name = 'probe';
     }
 
-    await validateOrFail({ entity: new ContextProbeEntity(), entityManager: {} as EntityManager, original: null });
+    await validateOrFail({ entity: new ContextProbeEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } });
 
     expect(seen).toEqual([true]);
   });
 });
 
-describe('isNew', () => {
-  it('returns true when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isNew({ name: 'test' })).toBe(true);
-    });
+describe('ValidationHelpers', () => {
+  const probeHelpers = async (operation: ValidationOperation) => {
+    const results: Record<string, unknown>[] = [];
+
+    class HelpersProbeEntity {
+      @ValidateWith<HelpersProbeEntity, 'name'>((_value, _entity, { manager, isInsert, isUpdate, isUpsert, isDirty }) => {
+        results.push({
+          manager,
+          isInsert: isInsert(),
+          isUpdate: isUpdate(),
+          isUpdateName: isUpdate('name'),
+          isUpdateLabel: isUpdate('label'),
+          isUpsert: isUpsert(),
+          isUpsertNameKey: isUpsert('unique_index_probes_on_name'),
+          isUpsertLabelKey: isUpsert('unique_index_probes_on_label'),
+          isDirtyName: isDirty('name'),
+          isDirtyLabel: isDirty('label'),
+        });
+      })
+      name = 'probe';
+
+      label = 'label';
+    }
+
+    await validateOrFail({ entity: new HelpersProbeEntity(), entityManager: dataSource.manager, operation });
+
+    return results;
+  };
+
+  it('passes the entity manager', async () => {
+    const [helpers] = await probeHelpers({ type: 'insert' });
+
+    expect(helpers!.manager).toBe(dataSource.manager);
   });
 
-  it('returns false when an original snapshot exists', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'test' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isNew({ name: 'test' })).toBe(false);
-    });
-  });
-});
-
-describe('isChanged', () => {
-  it('treats a defined property as changed when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isChanged({ name: 'test' }, 'name')).toBe(true);
-    });
-  });
-
-  it('treats an undefined property as unchanged when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isChanged({ name: undefined }, 'name')).toBe(false);
-    });
+  it('reports an insert, with every property dirty', async () => {
+    await expect(probeHelpers({ type: 'insert' })).resolves.toEqual([expect.objectContaining({
+      isInsert: true,
+      isUpdate: false,
+      isUpdateName: false,
+      isUpdateLabel: false,
+      isUpsert: false,
+      isUpsertNameKey: false,
+      isUpsertLabelKey: false,
+      isDirtyName: true,
+      isDirtyLabel: true,
+    })]);
   });
 
-  it('compares the property against the original snapshot when one exists', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isChanged({ name: 'new' }, 'name')).toBe(true);
-      expect(isChanged({ name: 'old' }, 'name')).toBe(false);
-    });
-  });
-});
-
-describe('isDirty', () => {
-  it('is dirty for a new entity even when the property matches its default', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isDirty({ name: undefined }, 'name')).toBe(true);
-    });
-  });
-
-  it('is dirty when an existing entity changed the property', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isDirty({ name: 'new' }, 'name')).toBe(true);
-    });
+  it('reports an update, with only the updated properties dirty', async () => {
+    await expect(probeHelpers({ type: 'update', properties: ['name'] })).resolves.toEqual([expect.objectContaining({
+      isInsert: false,
+      isUpdate: true,
+      isUpdateName: true,
+      isUpdateLabel: false,
+      isUpsert: false,
+      isUpsertNameKey: false,
+      isUpsertLabelKey: false,
+      isDirtyName: true,
+      isDirtyLabel: false,
+    })]);
   });
 
-  it('is not dirty when an existing entity did not change the property', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isDirty({ name: 'old' }, 'name')).toBe(false);
-    });
+  it('reports an upsert on its keyName, with every property dirty', async () => {
+    await expect(probeHelpers({ type: 'upsert', keyName: 'unique_index_probes_on_name' })).resolves.toEqual([expect.objectContaining({
+      isInsert: false,
+      isUpdate: false,
+      isUpdateName: false,
+      isUpdateLabel: false,
+      isUpsert: true,
+      isUpsertNameKey: true,
+      isUpsertLabelKey: false,
+      isDirtyName: true,
+      isDirtyLabel: true,
+    })]);
+  });
+
+  it('matches no keyName for an upsert on the primary key', async () => {
+    await expect(probeHelpers({ type: 'upsert', keyName: undefined })).resolves.toEqual([expect.objectContaining({
+      isUpsert: true,
+      isUpsertNameKey: false,
+      isUpsertLabelKey: false,
+    })]);
   });
 });
