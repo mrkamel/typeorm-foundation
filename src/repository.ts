@@ -8,7 +8,8 @@ export type AtLeastOne<T, Keys extends keyof T = keyof T> = {
 
 export type UpsertEntityOptions<Entity extends ObjectLiteral> = {
   updates: [keyof Entity, ...(keyof Entity)[]] | AtLeastOne<Entity>,
-} & ({ key?: (keyof Entity)[], indexPredicate?: never } | { key: (keyof Entity)[], indexPredicate?: string });
+  keyName?: string,
+};
 
 export type FoundationRepository<Entity extends ObjectLiteral> = Repository<Entity> & {
   override<Self, C extends object>(this: Self, custom: C & ThisType<Omit<Self, keyof C> & C>): Omit<Self, keyof C> & C;
@@ -40,7 +41,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
         return await this.insertEntity(entity as Entity);
       },
       async insertEntity(entity: Entity) {
-        await validateOrFail({ entity, entityManager: this.manager, original: null });
+        await validateOrFail({ entity, entityManager: this.manager, operation: { type: 'insert' } });
         await this.validateEntityOrFail(entity, null);
         await this.insert(entity);
         return entity;
@@ -57,7 +58,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         Object.assign(entity, updates);
 
-        await validateOrFail({ entity, entityManager: this.manager, original: before });
+        await validateOrFail({ entity, entityManager: this.manager, operation: { type: 'update', properties: Object.keys(updates) } });
         await this.validateEntityOrFail(entity, Object.keys(updates));
 
         await Promise.all(this.metadata.beforeUpdateListeners.filter(listener => listener.isAllowed(entity)).map(listener => listener.execute(entity)));
@@ -78,11 +79,13 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         return entity;
       },
-      async upsertEntity(entity: Entity, { updates, key, indexPredicate }: UpsertEntityOptions<Entity>) {
+      async upsertEntity(entity: Entity, { updates, keyName }: UpsertEntityOptions<Entity>) {
         const isUpdateValues = !Array.isArray(updates);
 
         const updateProperties = isUpdateValues ? Object.keys(updates) as (keyof Entity)[] : updates;
         if (!updateProperties.length) throw new ArgumentError('At least one update field must be specified for upsertEntity');
+
+        const conflictTarget = this._getConflictTarget(keyName);
 
         if (isUpdateValues) Object.assign(entity, updates);
 
@@ -90,7 +93,7 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
 
         Object.assign(entity, Object.fromEntries(autoUpdatePropertyNames.map(propertyName => [propertyName, new Date()])));
 
-        await validateOrFail({ entity, entityManager: this.manager, original: null });
+        await validateOrFail({ entity, entityManager: this.manager, operation: { type: 'upsert', keyName } });
         await this.validateEntityOrFail(entity, null);
 
         const result = await this.createQueryBuilder()
@@ -99,8 +102,8 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
           .values(entity)
           .orUpdate(
             this._propertyToColumnNames([...updateProperties, ...autoUpdatePropertyNames]),
-            key && this._propertyToColumnNames(key),
-            { indexPredicate }
+            conflictTarget.columnNames,
+            { indexPredicate: conflictTarget.where }
           )
           .returning('*')
           .execute();
@@ -134,17 +137,42 @@ export function createRepositoryFactory<Ext extends object = Record<never, never
           return column.databaseName;
         });
       },
+      _getConflictTarget(index: string | undefined): { columnNames: string[], where?: string } {
+        const metadata = this.metadata;
+        const entityName = metadata.name;
+
+        if (index === undefined) return { columnNames: this._getPrimaryColumns().map(column => column.databaseName) };
+
+        const indexMetadata = metadata.indices.find(candidate => candidate.name === index);
+
+        if (indexMetadata) {
+          if (!indexMetadata.isUnique) throw new ArgumentError(`Index ${index} on entity ${entityName} is not unique`);
+
+          return { columnNames: indexMetadata.columns.map(column => column.databaseName), where: indexMetadata.where };
+        }
+
+        const uniqueMetadata = metadata.uniques.find(candidate => candidate.name === index);
+        if (!uniqueMetadata) throw new ArgumentError(`Unknown index ${index} on entity ${entityName}`);
+        if (uniqueMetadata.deferrable) throw new ArgumentError(`Unique ${index} on entity ${entityName} is deferrable`);
+
+        return { columnNames: uniqueMetadata.columns.map(column => column.databaseName) };
+      },
       _getUpdateDatePropertyNames() {
         const metadata = this.metadata;
 
         return metadata.columns.filter(column => column.isUpdateDate).map(column => column.propertyName);
       },
-      _getPrimaryKeyCondition(entity: Entity) {
+      _getPrimaryColumns() {
         const metadata = this.metadata;
-        const entityName = metadata.name;
 
-        const primaryKeyPropertyNames = metadata.columns.filter(column => column.isPrimary).map(column => column.propertyName);
-        if (primaryKeyPropertyNames.length === 0) throw new ArgumentError(`No primary key defined on entity ${entityName}`);
+        if (metadata.primaryColumns.length === 0) throw new ArgumentError(`No primary key defined on entity ${metadata.name}`);
+
+        return metadata.primaryColumns;
+      },
+      _getPrimaryKeyCondition(entity: Entity) {
+        const entityName = this.metadata.name;
+
+        const primaryKeyPropertyNames = this._getPrimaryColumns().map(column => column.propertyName);
 
         const primaryKeyObject = Object.fromEntries(primaryKeyPropertyNames.map(key => [key, (entity as any)[key]]));
 

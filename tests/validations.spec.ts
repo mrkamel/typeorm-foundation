@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { EntityManager } from 'typeorm';
 import { IsString } from 'class-validator';
 import { ArgumentError, ValidationError } from '../src';
-import { isChanged, isDirty, isNew, References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import { References, validateOrFail, validationContext, ValidateWith } from '../src/validations';
+import type { ValidationOperation } from '../src/validations';
 import { dataSource } from './dataSource';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
@@ -84,7 +85,7 @@ describe('References', () => {
       teamId = team.id;
     }
 
-    await validateOrFail({ entity: new FullRowEntity(), entityManager: dataSource.manager, original: null });
+    await validateOrFail({ entity: new FullRowEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } });
 
     expect(relatedRows).toEqual([{ id: team.id, name: 'Research', code: 'research', slug: 'research-team', archived: false }]);
   });
@@ -150,7 +151,7 @@ describe('References', () => {
     }
 
     await expect(
-      validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, original: null })
+      validateOrFail({ entity: new SingleKeyEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } })
     ).rejects.toThrow(new ArgumentError(
       'SingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
     ));
@@ -163,7 +164,7 @@ describe('References', () => {
     }
 
     await expect(
-      validateOrFail({ entity: new SkippedSingleKeyEntity(), entityManager: dataSource.manager, original: null })
+      validateOrFail({ entity: new SkippedSingleKeyEntity(), entityManager: dataSource.manager, operation: { type: 'insert' } })
     ).rejects.toThrow(new ArgumentError(
       'SkippedSingleKeyEntity.membershipId: references 2 primary key column(s) of MembershipEntity with 1 foreign key column(s)'
     ));
@@ -271,7 +272,7 @@ describe('dependencies', () => {
       name: unknown = 42;
     }
 
-    await expect(validateOrFail({ entity: new OwnPropertyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    await expect(validateOrFail({ entity: new OwnPropertyEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } })).rejects.toThrow(ValidationError);
     expect(calls).toEqual([]);
   });
 
@@ -286,7 +287,7 @@ describe('dependencies', () => {
       label = 'fine';
     }
 
-    await expect(validateOrFail({ entity: new DeclaredDependencyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    await expect(validateOrFail({ entity: new DeclaredDependencyEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } })).rejects.toThrow(ValidationError);
     expect(calls).toEqual([]);
   });
 
@@ -301,7 +302,7 @@ describe('dependencies', () => {
       label = 'fine';
     }
 
-    await expect(validateOrFail({ entity: new UndeclaredDependencyEntity(), entityManager: {} as EntityManager, original: null })).rejects.toThrow(ValidationError);
+    await expect(validateOrFail({ entity: new UndeclaredDependencyEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } })).rejects.toThrow(ValidationError);
     expect(calls).toEqual(['fine']);
   });
 });
@@ -317,63 +318,94 @@ describe('validationContext', () => {
       name = 'probe';
     }
 
-    await validateOrFail({ entity: new ContextProbeEntity(), entityManager: {} as EntityManager, original: null });
+    await validateOrFail({ entity: new ContextProbeEntity(), entityManager: {} as EntityManager, operation: { type: 'insert' } });
 
     expect(seen).toEqual([true]);
   });
 });
 
-describe('isNew', () => {
-  it('returns true when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isNew({ name: 'test' })).toBe(true);
-    });
+describe('ValidationHelpers', () => {
+  const probeHelpers = async (operation: ValidationOperation) => {
+    const results: Record<string, unknown>[] = [];
+
+    class HelpersProbeEntity {
+      @ValidateWith<HelpersProbeEntity, 'name'>((_value, _entity, { manager, isInsert, isUpdate, isUpsert, isDirty }) => {
+        results.push({
+          manager,
+          isInsert: isInsert(),
+          isUpdate: isUpdate(),
+          isUpdateName: isUpdate('name'),
+          isUpdateLabel: isUpdate('label'),
+          isUpsert: isUpsert(),
+          isUpsertNameKey: isUpsert('unique_probe_name'),
+          isUpsertLabelKey: isUpsert('unique_probe_label'),
+          isDirtyName: isDirty('name'),
+          isDirtyLabel: isDirty('label'),
+        });
+      })
+      name = 'probe';
+
+      label = 'label';
+    }
+
+    await validateOrFail({ entity: new HelpersProbeEntity(), entityManager: dataSource.manager, operation });
+
+    return results;
+  };
+
+  it('passes the entity manager', async () => {
+    const [helpers] = await probeHelpers({ type: 'insert' });
+
+    expect(helpers!.manager).toBe(dataSource.manager);
   });
 
-  it('returns false when an original snapshot exists', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'test' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isNew({ name: 'test' })).toBe(false);
-    });
-  });
-});
-
-describe('isChanged', () => {
-  it('treats a defined property as changed when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isChanged({ name: 'test' }, 'name')).toBe(true);
-    });
-  });
-
-  it('treats an undefined property as unchanged when there is no original snapshot', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isChanged({ name: undefined }, 'name')).toBe(false);
-    });
+  it('reports an insert, with every property dirty', async () => {
+    await expect(probeHelpers({ type: 'insert' })).resolves.toEqual([expect.objectContaining({
+      isInsert: true,
+      isUpdate: false,
+      isUpdateName: false,
+      isUpdateLabel: false,
+      isUpsert: false,
+      isUpsertNameKey: false,
+      isUpsertLabelKey: false,
+      isDirtyName: true,
+      isDirtyLabel: true,
+    })]);
   });
 
-  it('compares the property against the original snapshot when one exists', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isChanged({ name: 'new' }, 'name')).toBe(true);
-      expect(isChanged({ name: 'old' }, 'name')).toBe(false);
-    });
-  });
-});
-
-describe('isDirty', () => {
-  it('is dirty for a new entity even when the property matches its default', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: null, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isDirty({ name: undefined }, 'name')).toBe(true);
-    });
-  });
-
-  it('is dirty when an existing entity changed the property', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isDirty({ name: 'new' }, 'name')).toBe(true);
-    });
+  it('reports an update, with only the updated properties dirty', async () => {
+    await expect(probeHelpers({ type: 'update', properties: ['name'] })).resolves.toEqual([expect.objectContaining({
+      isInsert: false,
+      isUpdate: true,
+      isUpdateName: true,
+      isUpdateLabel: false,
+      isUpsert: false,
+      isUpsertNameKey: false,
+      isUpsertLabelKey: false,
+      isDirtyName: true,
+      isDirtyLabel: false,
+    })]);
   });
 
-  it('is not dirty when an existing entity did not change the property', () => {
-    validationContext.run({ entityManager: {} as EntityManager, original: { name: 'old' }, customErrors: {}, firstPassInvalidProperties: null }, () => {
-      expect(isDirty({ name: 'old' }, 'name')).toBe(false);
-    });
+  it('reports an upsert on its keyName, with every property dirty', async () => {
+    await expect(probeHelpers({ type: 'upsert', keyName: 'unique_probe_name' })).resolves.toEqual([expect.objectContaining({
+      isInsert: false,
+      isUpdate: false,
+      isUpdateName: false,
+      isUpdateLabel: false,
+      isUpsert: true,
+      isUpsertNameKey: true,
+      isUpsertLabelKey: false,
+      isDirtyName: true,
+      isDirtyLabel: true,
+    })]);
+  });
+
+  it('matches no keyName for an upsert on the primary key', async () => {
+    await expect(probeHelpers({ type: 'upsert', keyName: undefined })).resolves.toEqual([expect.objectContaining({
+      isUpsert: true,
+      isUpsertNameKey: false,
+      isUpsertLabelKey: false,
+    })]);
   });
 });

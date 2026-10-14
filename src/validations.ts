@@ -7,9 +7,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ArgumentError, MissingValidationContextError, ValidationError } from './errors';
 import { singleton } from './singleton';
 
+export type ValidationOperation =
+  | { type: 'insert' }
+  | { type: 'update', properties: string[] }
+  | { type: 'upsert', keyName: string | undefined };
+
 type ValidationStore = {
   entityManager: EntityManager,
-  original: ObjectLiteral | null,
+  operation: ValidationOperation,
   customErrors: Record<string, string>,
   firstPassInvalidProperties: Set<string> | null,
 };
@@ -27,16 +32,16 @@ export function getValidationContextOrFail() {
 }
 
 export async function validateOrFail<T extends object>(
-  { entity, entityManager, original }:
-  { entity: T, entityManager: EntityManager, original: T | null }
+  { entity, entityManager, operation }:
+  { entity: T, entityManager: EntityManager, operation: ValidationOperation }
 ): Promise<T> {
   const firstPassErrors = await validationContext.run(
-    { entityManager, original, customErrors: {}, firstPassInvalidProperties: null },
+    { entityManager, operation, customErrors: {}, firstPassInvalidProperties: null },
     async () => await validate(entity),
   );
 
   const errors = await validationContext.run(
-    { entityManager, original, customErrors: {}, firstPassInvalidProperties: new Set(firstPassErrors.map((error) => error.property)) },
+    { entityManager, operation, customErrors: {}, firstPassInvalidProperties: new Set(firstPassErrors.map((error) => error.property)) },
     async () => await validate(entity),
   );
 
@@ -77,26 +82,27 @@ function matchValue(value: unknown, caseInsensitive: 'upper' | 'lower' | undefin
   return Raw((columnAlias) => `${fn}(${columnAlias}) = ${fn}(:uniquenessValue)`, { uniquenessValue: value });
 }
 
-export function isChanged<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(entity: Entity, property: Key) {
-  const context = getValidationContextOrFail();
+export type ValidationHelpers<Entity extends object> = {
+  manager: EntityManager,
+  isInsert: () => boolean,
+  isUpdate: (property?: Extract<keyof Entity, string>) => boolean,
+  isUpsert: (keyName?: string) => boolean,
+  isDirty: (property: Extract<keyof Entity, string>) => boolean,
+};
 
-  if (!context.original) return entity[property] !== undefined;
+function createValidationHelpers<Entity extends object>(): ValidationHelpers<Entity> {
+  const { entityManager, operation } = getValidationContextOrFail();
 
-  return context.original?.[property] !== entity[property];
-}
+  const isInsert = () => operation.type === 'insert';
+  const isUpdate = (property?: Extract<keyof Entity, string>) => operation.type === 'update' && (property === undefined || operation.properties.includes(property));
+  const isUpsert = (keyName?: string) => operation.type === 'upsert' && (keyName === undefined || operation.keyName === keyName);
+  const isDirty = (property: Extract<keyof Entity, string>) => isInsert() || isUpsert() || isUpdate(property);
 
-export function isDirty<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>>(entity: Entity, property: Key) {
-  return isNew(entity) || isChanged(entity, property);
-}
-
-export function isNew<Entity extends ObjectLiteral>(_entity: Entity) {
-  const context = getValidationContextOrFail();
-
-  return !context.original;
+  return { manager: entityManager, isInsert, isUpdate, isUpsert, isDirty };
 }
 
 export function ValidateWith<Entity extends object, Key extends Extract<keyof Entity, string>>(
-  validate: (value: Entity[Key], entity: Entity, manager: EntityManager) => Promise<string | undefined> | string | undefined,
+  validate: (value: Entity[Key], entity: Entity, helpers: ValidationHelpers<Entity>) => Promise<string | undefined> | string | undefined,
   options?: { dependencies?: Extract<keyof Entity, string>[] },
 ) {
   return function (target: Entity, propertyName: Key) {
@@ -113,7 +119,7 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
 
           const context = getValidationContextOrFail();
           const entity = validationArguments?.object as Entity;
-          const errorMessage = await validate(value, entity, context.entityManager);
+          const errorMessage = await validate(value, entity, createValidationHelpers<Entity>());
 
           if (errorMessage) {
             context.customErrors[name] = errorMessage;
@@ -131,8 +137,8 @@ export function ValidateWith<Entity extends object, Key extends Extract<keyof En
 export function References<Entity extends ObjectLiteral, Key extends Extract<keyof Entity, string>, Related = any>(
   relatedEntity: () => Function,
   options?: {
-    validate?: (related: Related, entity: Entity) => Promise<string | undefined> | string | undefined,
-    validateIf?: (entity: Entity) => boolean,
+    validate?: (related: Related, entity: Entity, helpers: ValidationHelpers<Entity>) => Promise<string | undefined> | string | undefined,
+    validateIf?: (entity: Entity, helpers: ValidationHelpers<Entity>) => boolean,
     dependencies?: Extract<keyof Entity, string>[],
     message?: MessageOption,
     foreignKey?: Extract<keyof Entity, string> | Extract<keyof Entity, string>[],
@@ -174,8 +180,9 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
           if (hasFailedDependencies(fullDependencies)) return true;
 
           const entity = validationArguments?.object as Entity;
+          const helpers = createValidationHelpers<Entity>();
 
-          if (options?.validateIf && !options.validateIf(entity)) return true;
+          if (options?.validateIf && !options.validateIf(entity, helpers)) return true;
 
           const foreignKeyValues = foreignKeys.map(key => entity[key]);
           if (foreignKeyValues.some(foreignKeyValue => foreignKeyValue == null)) return false;
@@ -188,7 +195,7 @@ export function References<Entity extends ObjectLiteral, Key extends Extract<key
           if (!existing) return false;
 
           if (options?.validate) {
-            const errorMessage = await options.validate(existing as Related, entity);
+            const errorMessage = await options.validate(existing as Related, entity, helpers);
 
             if (errorMessage) {
               context.customErrors[name] = errorMessage;
@@ -208,7 +215,7 @@ export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof
   options?: {
     scope?: Extract<keyof Entity, string>[],
     caseInsensitive?: 'upper' | 'lower',
-    validateIf?: (entity: Entity) => boolean,
+    validateIf?: (entity: Entity, helpers: ValidationHelpers<Entity>) => boolean,
     dependencies?: Extract<keyof Entity, string>[],
     message?: MessageOption,
   },
@@ -227,7 +234,7 @@ export function IsUnique<Entity extends ObjectLiteral, Key extends Extract<keyof
 
           const entity = validationArguments?.object as Entity;
 
-          if (options?.validateIf && !options.validateIf(entity)) return true;
+          if (options?.validateIf && !options.validateIf(entity, createValidationHelpers<Entity>())) return true;
 
           const context = getValidationContextOrFail();
           const repository = context.entityManager.getRepository(entity.constructor);

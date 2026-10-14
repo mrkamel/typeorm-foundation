@@ -1,8 +1,11 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { IsBoolean, IsInt, IsString } from 'class-validator';
 
 @Entity('reservations')
-@Index(['resource'], { unique: true, where: '"active" = true' })
+@Index('index_reservations_resource', ['resource'], { unique: true, where: '"active" = true' })
+@Index('index_reservations_quantity', ['quantity'])
+@Unique('unique_reservations_resource_quantity', ['resource', 'quantity'])
+@Unique('unique_reservations_id_resource', ['id', 'resource'], { deferrable: 'INITIALLY DEFERRED' })
 export class ReservationEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

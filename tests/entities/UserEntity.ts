@@ -1,7 +1,7 @@
 import { AfterUpdate, BeforeUpdate, Column, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 import type { ValueTransformer } from 'typeorm';
 import { IsEmail } from 'class-validator';
-import { isDirty, IsUnique, References, ValidateWith } from '../../src/validations';
+import { IsUnique, References, ValidateWith } from '../../src/validations';
 import { TeamEntity } from './TeamEntity';
 
 const scoreTransformer: ValueTransformer = {
@@ -18,7 +18,7 @@ export class UserEntity {
 
   @Column({ type: 'text' })
   @IsEmail()
-  @IsUnique({ validateIf: (user) => isDirty(user, 'email') })
+  @IsUnique({ validateIf: (_user, { isDirty }) => isDirty('email') })
   email!: string;
 
   @Column({ type: 'integer', nullable: true })
