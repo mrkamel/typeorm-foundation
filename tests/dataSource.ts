@@ -6,8 +6,9 @@ import { MembershipEntity } from './entities/MembershipEntity';
 import { AssignmentEntity } from './entities/AssignmentEntity';
 import { ReservationEntity } from './entities/ReservationEntity';
 import { ActiveReservationEntity } from './entities/ActiveReservationEntity';
+import { SeatEntity } from './entities/SeatEntity';
 
-const entities = [UserEntity, TeamEntity, MembershipEntity, AssignmentEntity, ReservationEntity, ActiveReservationEntity];
+const entities = [UserEntity, TeamEntity, MembershipEntity, AssignmentEntity, ReservationEntity, ActiveReservationEntity, SeatEntity];
 
 export const database = process.env.DATABASE ?? 'postgres';
 

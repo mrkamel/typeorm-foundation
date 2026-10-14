@@ -7,6 +7,8 @@ import type { ValidationOperation } from '../src/validations';
 import { database, dataSource } from './dataSource';
 import { ReservationRepository } from './repositories/ReservationRepository';
 import { ReservationEntity } from './entities/ReservationEntity';
+import { SeatRepository } from './repositories/SeatRepository';
+import { SeatEntity } from './entities/SeatEntity';
 import { UserRepository } from './repositories/UserRepository';
 import { TeamRepository } from './repositories/TeamRepository';
 import { MembershipRepository } from './repositories/MembershipRepository';
@@ -281,6 +283,23 @@ describe('IsUnique', () => {
     await expect(
       validateOrFail({ entity: new UnknownKeyEntity(), entityManager, operation: { type: 'insert' } })
     ).rejects.toThrow(new ArgumentError('Unknown index index_missing on entity ReservationEntity'));
+  });
+
+  it('reads a relation column of its keyName through the relation', async () => {
+    const team = await TeamRepository.insertEntity(new TeamEntity({ name: 'Seating', code: 'seating', archived: false }));
+    const otherTeam = await TeamRepository.insertEntity(new TeamEntity({ name: 'Other Seating', code: 'other-seating', archived: false }));
+
+    await SeatRepository.insertEntity(new SeatEntity({ team, label: 'seat-1' }));
+
+    await expect(SeatRepository.insertEntity(new SeatEntity({ team: otherTeam, label: 'seat-1' }))).resolves.toBeDefined();
+
+    await expect(
+      SeatRepository.insertEntity(new SeatEntity({ team, label: 'seat-1' }))
+    ).rejects.toThrow(new ValidationError({ label: ['is already taken'] }));
+
+    await expect(
+      SeatRepository.insertEntity(new SeatEntity({ team: new TeamEntity({ id: team.id, name: 'Stale name' }), label: 'seat-1' }))
+    ).rejects.toThrow(new ValidationError({ label: ['is already taken'] }));
   });
 
   describe.skipIf(database !== 'postgres')('with a partial index as keyName', () => {
